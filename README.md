@@ -8,6 +8,19 @@ needs (`coreApi`), the modules it depends on, and what it exports.
 
 ## What it holds
 
+The renditions of every picture, video and recording in a folder that wants them (`processing`):
+the roles `/etc/renditions.yaml` names, which the module installs once and never overwrites,
+made by `generate-derivatives` in the pipelines `media-stills` and `media-transcode`, with a
+video's storyboard and chapters (`detect-chapters`). A file that has all of them is marked with
+the table they were made by, and the `renditions-heal` service runs `renditions-scan` every hour,
+which announces the files whose mark is missing or names another table. `regenerate` makes them
+again under a folder. [architecture/renditions.md](architecture/renditions.md) says how.
+
+The libraries other modules build on: `@media/probe` (what EMS says of a file), `@media/orientation`
+(the display frame and the pixel shape), `@media/storyboard`, `@media/chapters`, `@media/vtt`,
+`@media/writable`, the marker (`@media/rendition-marker`), the facts (`@media/facts`), whether
+work waits for a fact (`@media/waiting`), and the commands' answers (`@media/api`).
+
 The workers of the media pool, `/var/pools/media`, where the modules' pipelines put the media work a
 crawl must not start all at once: `media-worker`, on one budget of CPU slots (`CFG_CPU_SLOTS`,
 `CFG_CPU_WORKERS`, `CFG_CPU_NON_ENTRY_SLOTS`), and `models` and `models-second`, which keep the

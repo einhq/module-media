@@ -1,0 +1,5 @@
+{
+  "description": "Runs renditions-scan every hour, which announces every file, in any tree, whose renditions are missing or were made by another rendition table, unless rendition work is waiting",
+  "restartPolicy": "on-failure",
+  "workClass": "background"
+}

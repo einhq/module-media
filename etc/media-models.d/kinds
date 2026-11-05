@@ -1,0 +1,4 @@
+# The media module's own model-bound work in the media pool, a kind a line: a backlog the models
+# worker rotates between with the other modules'. Every kind a pipeline step names with
+# `requires: models` is here, or it never runs (test/pipelines.test.ts).
+shots                    # a video's cuts, its chapters

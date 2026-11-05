@@ -1,0 +1,6 @@
+# The media module's own work in the media pool that takes the media worker's CPU budget, a kind a
+# line, in the order offered. `reserve` puts a kind in the share kept for the work after ingest
+# (CFG_CPU_NON_ENTRY_SLOTS). Every kind a pipeline step names with `requires: cpu` is here, or it
+# never runs (test/pipelines.test.ts). Both wait on EMS, which decodes and encodes the media:
+stills reserve           # pictures of every media file, a video's storyboard  (priority 60)
+transcode reserve        # a video's or recording's web rendition, two slots   (priority 10)
