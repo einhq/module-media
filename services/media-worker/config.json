@@ -1,0 +1,5 @@
+{
+  "description": "Worker for the media pool's work that is not a model request — thumbnails, renditions, fingerprints and EMS's encodes it waits on, face matching, duplicates, staging — the kinds the modules' drop-ins name, on one CPU budget",
+  "restartPolicy": "on-failure",
+  "workClass": "background"
+}

@@ -1,0 +1,5 @@
+{
+  "description": "Worker for the media pool's model-bound steps — faces, picture and text vectors, text in pictures, transcripts, voices — each one a call into EMS, the kinds the modules' drop-ins name",
+  "restartPolicy": "on-failure",
+  "workClass": "background"
+}

@@ -1,0 +1,74 @@
+#!ts
+/**
+ * media-pool-kinds — the kinds of work a worker of the media pool takes, as `pipeline-worker`'s
+ * flags: every module's drop-in, `/etc/media-worker.d/<module>/kinds` for the CPU worker and
+ * `/etc/media-models.d/<module>/kinds` for the model workers, the modules in name order. A kind a
+ * line, in the order offered; `reserve` after a CPU kind puts it in the share of the budget kept
+ * for the work after ingest. `#` starts a comment. A kind two modules name counts once.
+ */
+
+import type { CmdReturn, Command } from '@ein/client';
+import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
+import type { PoolKinds } from '@media/api';
+
+/** Where each worker's drop-ins are. */
+const DROP_INS: Record<string, string> = { cpu: '/etc/media-worker.d', models: '/etc/media-models.d' };
+
+const readText = async (cmd: Command, path: string): Promise<string> => {
+  const handle = await cmd.sys.vfs.open(cmd.access, path, { mode: 'r' });
+  try {
+    return await new Response(handle.readable).text();
+  } finally {
+    await handle.close();
+  }
+};
+
+/** The kinds the drop-ins under `dir` name; none when there are no drop-ins. */
+const poolKinds = async (cmd: Command, dir: string): Promise<PoolKinds> => {
+  const found: PoolKinds = { kinds: [], reserve: [] };
+  const modules = await cmd.sys.vfs.children(cmd.access, dir).then((entries) => entries.map((entry) => entry.name).sort(), () => []);
+  for (const module of modules) {
+    const text = await readText(cmd, `${dir}/${module}/kinds`).catch(() => '');
+    for (const line of text.split('\n')) {
+      const [kind, ...words] = line.replace(/#.*/, '').trim().split(/\s+/).filter(Boolean);
+      if (!kind || found.kinds.includes(kind)) continue;
+      found.kinds.push(kind);
+      if (words.includes('reserve')) found.reserve.push(kind);
+    }
+  }
+  return found;
+};
+
+const mediaPoolKinds = async (cmd: Command): CmdReturn => {
+  const unknown: string[] = [];
+  const flags = parseArgs(cmd.args, { boolean: ['reverse'], unknown: collectUnknownFlags(unknown) });
+  if (await reportUnknownFlags(cmd, unknown)) return 1;
+  const worker = String(flags._[0] ?? '');
+  const dir = DROP_INS[worker];
+  if (!dir) {
+    await cmd.writeError(`media-pool-kinds: expected cpu or models, not '${worker}'\n`);
+    return 1;
+  }
+
+  const found = await poolKinds(cmd, dir);
+  // The second models worker goes through the same backlogs the other way round.
+  if (flags.reverse) found.kinds.reverse();
+  if (cmd.json) {
+    await cmd.writeJSON(found satisfies PoolKinds);
+    return 0;
+  }
+  await cmd.writeLn([...found.kinds.map((kind) => `--kind ${kind}`), ...found.reserve.map((kind) => `--reserve-kind ${kind}`)].join(' '));
+  return 0;
+};
+
+mediaPoolKinds.spec = {
+  name: 'media-pool-kinds',
+  effect: 'read' as const,
+  description: "The kinds of work a worker of the media pool takes, from the modules' drop-ins, as pipeline-worker's flags",
+  args: [{ name: 'worker', type: 'string' as const, description: 'cpu (the media-worker service) or models (models and models-second)' }],
+  flags: [{ name: 'reverse', type: 'bool' as const, description: 'The kinds in the reverse order, as the second models worker takes them' }],
+  examples: ['media-pool-kinds cpu', 'media-pool-kinds models --reverse', 'JSON_OUTPUT=1 media-pool-kinds models'],
+  returns: 'the flags (--kind for each kind, --reserve-kind for each reserved one); in JSON the kinds in order and the reserved ones.',
+};
+
+export default mediaPoolKinds;
