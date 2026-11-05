@@ -5,7 +5,8 @@
 # `/etc/media-worker.d/<module>/kinds`, which `media-pool-kinds cpu` reads. A kind no worker takes
 # never runs at all, since the pool has nobody to claim it, and the dashboard shows it as having
 # no worker. The drop-ins are read as the worker starts: until one names a kind, it waits for one,
-# and after a module changes its kinds the worker is restarted to take them.
+# and `mod install` restarts it once it has put in place a module whose kinds are new or changed
+# (`dropIns` in mod.json).
 #
 # CFG_CPU_SLOTS is the budget and each step's `requires` what a job takes of it, so one transcode
 # excludes a concurrent face assignment on a small box while two assignments share it;

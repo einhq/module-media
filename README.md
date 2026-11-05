@@ -38,5 +38,6 @@ A module names the kinds of its work in drop-ins, which `mod setup` links as
 `/etc/media-worker.d/<module>/kinds` and `/etc/media-models.d/<module>/kinds`: a kind a line, in the
 order offered, `reserve` after a CPU kind to put it in the share kept for the work after ingest, `#`
 for a comment. `media-pool-kinds cpu|models` reads them as the workers start; a worker with no kind
-to take waits for one, and after a module changes its kinds the workers are restarted to take them.
-The answer's type is `PoolKinds` in `@media/api`.
+to take waits for one, and `mod install` restarts the workers once it has put in place a module
+whose kinds are new or changed, as `dropIns` in `mod.json` asks. The answer's type is `PoolKinds` in
+`@media/api`.

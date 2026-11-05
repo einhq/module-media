@@ -20,8 +20,8 @@
 # The kinds are backlogs, not devices: the modules name theirs in drop-ins,
 # `/etc/media-models.d/<module>/kinds`, which `media-pool-kinds models` reads. A kind is the unit
 # the rotation below fairs between, and each step takes one slot. The drop-ins are read as the
-# worker starts: until one names a kind, it waits for one, and after a module changes its kinds the
-# worker is restarted to take them.
+# worker starts: until one names a kind, it waits for one, and `mod install` restarts it once it has
+# put in place a module whose kinds are new or changed (`dropIns` in mod.json).
 #
 # Rotation is round-robin over the kind list rather than by priority, so a kind with little work
 # drains and hands its slots straight on. --kind-quantum is the anti-starvation bound and nothing
