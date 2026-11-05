@@ -48,3 +48,8 @@ export type RenditionsScanAnswer = {
   /** The files announced, with `-v`. */
   paths?: string[];
 };
+
+/** What `exif-extract` says of a file: what it read, or that a module holds the file unread. */
+export type ExifExtractAnswer =
+  | { indexedAt: string; width?: number; height?: number; sar?: number; angle?: number; undecodable?: string }
+  | { held: string; by: string };

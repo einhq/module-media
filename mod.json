@@ -1,7 +1,7 @@
 {
   "name": "media",
-  "version": "0.1.1",
-  "description": "Renditions of pictures, videos and recordings, and what describes a file, for any module: the renditions the rendition table names and the heal that keeps them current, and the media pool's workers, which take the kinds of work the modules' drop-ins name",
+  "version": "0.1.2",
+  "description": "Renditions of pictures, videos and recordings, and what describes a file, for any module: reading a file's metadata, the renditions the rendition table names and the heal that keeps them current, the facts of a media file, and the media pool's workers, which take the kinds of work the modules' drop-ins name",
   "license": "Elastic-2.0, with an added permission (LICENSE)",
   "coreApi": "^0.12.0",
   "dependencies": {
@@ -9,8 +9,10 @@
   },
   "exports": {
     "./api": "./lib/api.ts",
+    "./bridge": "./lib/bridge.ts",
     "./chapters": "./lib/chapters.ts",
     "./facts": "./lib/facts.ts",
+    "./file-rules": "./lib/file-rules.ts",
     "./orientation": "./lib/orientation.ts",
     "./probe": "./lib/probe.ts",
     "./rendition-marker": "./lib/rendition-marker.ts",
@@ -21,8 +23,12 @@
   },
   "imports": {
     "@media/api": "./lib/api.ts",
+    "@media/bridge": "./lib/bridge.ts",
     "@media/chapters": "./lib/chapters.ts",
+    "@media/exif-date": "./lib/exif-date.ts",
+    "@media/exif-service": "./lib/exif-service.ts",
     "@media/facts": "./lib/facts.ts",
+    "@media/file-rules": "./lib/file-rules.ts",
     "@media/image-ladder": "./lib/image-ladder.ts",
     "@media/orientation": "./lib/orientation.ts",
     "@media/probe": "./lib/probe.ts",
@@ -30,6 +36,7 @@
     "@media/staged-output": "./lib/staged-output.ts",
     "@media/storyboard": "./lib/storyboard.ts",
     "@media/transcode": "./lib/transcode.ts",
+    "@media/video-codec": "./lib/video-codec.ts",
     "@media/vtt": "./lib/vtt.ts",
     "@media/waiting": "./lib/waiting.ts",
     "@media/writable": "./lib/writable.ts",
@@ -38,6 +45,22 @@
     "@std/ulid": "jsr:@std/ulid@^1.0.0",
     "@std/yaml": "jsr:@std/yaml@^1.0.11"
   },
+  "nodeTypes": [
+    {
+      "type": "exif",
+      "label": "EXIF",
+      "category": "content",
+      "description": "The metadata read from a media file — camera, picture, exposure, its clock readings and GPS fix — kept as a child of the file."
+    }
+  ],
+  "indexes": [
+    {
+      "name": "mime",
+      "on": [
+        "mimetype"
+      ]
+    }
+  ],
   "config": {
     "options": [
       {

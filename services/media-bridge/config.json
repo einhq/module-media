@@ -1,0 +1,5 @@
+{
+  "description": "Turns VFS mutations into the facts of a media file itself — arrived, changed, turned, removed, read, its renditions made — that pipelines trigger on",
+  "restartPolicy": "on-failure",
+  "workClass": "background"
+}

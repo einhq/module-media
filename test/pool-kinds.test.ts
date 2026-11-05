@@ -1,8 +1,8 @@
 /**
  * The media pool's workers take the kinds the modules name in their drop-ins: `media-pool-kinds`
- * reads every module's `kinds`, the modules in name order, a kind a line, comments left out, a kind
- * named twice once, `reserve` marking the share kept after ingest; with no drop-in it names none.
- * The shell splits its answer into separate flags, as the workers' start scripts need.
+ * reads every module's `kinds`, the media module's own among them, the modules in name order, a
+ * kind a line, comments left out, a kind named twice once, `reserve` marking the share kept after
+ * ingest. The shell splits its answer into separate flags, as the workers' start scripts need.
  */
 
 import { assertEquals, assertStringIncludes } from '@std/assert';
@@ -31,26 +31,29 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
   };
 
   try {
-    await t.step('no drop-in names no kind', async () => {
-      assertEquals(await client.execJson<PoolKinds>('media-pool-kinds cpu'), { kinds: [], reserve: [] });
+    await t.step("the media module's own drop-ins name its kinds", async () => {
+      assertEquals(await client.execJson<PoolKinds>('media-pool-kinds cpu'), { kinds: ['ingest', 'stills', 'transcode'], reserve: ['stills', 'transcode'] });
       const text = await client.exec('media-pool-kinds models', { json: false });
-      assertEquals(String(text.data).trim(), '');
+      assertEquals(String(text.data).trim(), '--kind shots');
     });
 
     await t.step('the modules in name order, comments left out, a kind named twice once', async () => {
-      await writeKinds('media-worker', 'zeta', "# zeta's work\ningest\nstills reserve   # pictures\n");
+      await writeKinds('media-worker', 'zeta', "# zeta's work\ningest\nstills reserve   # pictures\ndedupe\n");
       await writeKinds('media-worker', 'alpha', 'unzip\n\ningest\n');
-      assertEquals(await client.execJson<PoolKinds>('media-pool-kinds cpu'), { kinds: ['unzip', 'ingest', 'stills'], reserve: ['stills'] });
+      assertEquals(await client.execJson<PoolKinds>('media-pool-kinds cpu'), {
+        kinds: ['unzip', 'ingest', 'stills', 'transcode', 'dedupe'],
+        reserve: ['stills', 'transcode'],
+      });
     });
 
     await t.step('the flags split into words, as a start script uses them', async () => {
-      const split = await client.exec('kinds=$(media-pool-kinds cpu); for word in $kinds; do echo "[$word]"; done', { json: false });
-      assertEquals(String(split.data).trim().split('\n'), ['[--kind]', '[unzip]', '[--kind]', '[ingest]', '[--kind]', '[stills]', '[--reserve-kind]', '[stills]']);
+      const split = await client.exec('kinds=$(media-pool-kinds models); for word in $kinds; do echo "[$word]"; done', { json: false });
+      assertEquals(String(split.data).trim().split('\n'), ['[--kind]', '[shots]']);
     });
 
     await t.step('the second models worker takes them the other way round', async () => {
       await writeKinds('media-models', 'archive', 'faces\nembed-picture\nocr\n');
-      assertEquals((await client.execJson<PoolKinds>('media-pool-kinds models --reverse')).kinds, ['ocr', 'embed-picture', 'faces']);
+      assertEquals((await client.execJson<PoolKinds>('media-pool-kinds models --reverse')).kinds, ['shots', 'ocr', 'embed-picture', 'faces']);
     });
 
     await t.step('anything but cpu or models is refused', async () => {

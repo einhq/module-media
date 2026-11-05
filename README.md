@@ -8,6 +8,13 @@ needs (`coreApi`), the modules it depends on, and what it exports.
 
 ## What it holds
 
+The reading of every media file in a folder that wants processing: `exif-extract` keeps what its
+metadata says under `metadata/exif` and the facts every reader needs on the file, after asking each
+module's hold command (`/etc/media-read.d/<module>/hold`) whether to leave it unread, and the
+`media-bridge` service announces the facts of a media file itself — discovered, its bytes changed,
+turned, removed, read, its renditions made — which pipelines start on (`@media/file-rules`, and the
+bridge runner `@media/bridge`). [architecture/reading.md](architecture/reading.md) says how.
+
 The renditions of every picture, video and recording in a folder that wants them (`processing`):
 the roles `/etc/renditions.yaml` names, which the module installs once and never overwrites,
 made by `generate-derivatives` in the pipelines `media-stills` and `media-transcode`, with a

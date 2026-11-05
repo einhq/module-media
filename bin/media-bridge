@@ -1,0 +1,37 @@
+#!ts
+/**
+ * media-bridge — turns VFS mutations into the facts of a media file itself (`@media/file-rules`):
+ * it arrived, its bytes changed, it was turned or removed, its metadata was read, its renditions
+ * were made. The facts go to /dev/events, for the pipeline engine to trigger on.
+ *
+ * The bridge is the only emitter of those facts. Steps stay dumb: they write to the VFS and the fact
+ * follows from what they wrote, so the event stream can never disagree with what is on disk.
+ *
+ * `MEDIA_BRIDGE_CONCURRENCY` (default 4) consumers compete on the one queue (`@media/bridge`).
+ */
+
+import { QUEUES_PATH } from '@ein/paths';
+import type { CmdReturn, Command } from '@ein/client';
+import { nodeExists, readNode, runBridge } from '@media/bridge';
+import { deriveFileEvents, MEDIA_BRIDGE_ROUTING_KEYS } from '@media/file-rules';
+
+const mediaBridge = async (cmd: Command): CmdReturn => {
+  const ctx = { getNode: (path: string) => readNode(cmd, path), exists: (path: string) => nodeExists(cmd, path) };
+  return await runBridge(cmd, {
+    name: 'media-bridge',
+    queuePath: cmd.env.MEDIA_BRIDGE_QUEUE || `${QUEUES_PATH}/media-bridge`,
+    routingKeys: MEDIA_BRIDGE_ROUTING_KEYS,
+    concurrency: Number(cmd.env.MEDIA_BRIDGE_CONCURRENCY) || 4,
+    derive: (event) => deriveFileEvents(event, ctx),
+  });
+};
+
+mediaBridge.spec = {
+  name: 'media-bridge',
+  effect: 'write' as const,
+  description: 'Derive the facts of a media file itself from VFS mutations: arrived, changed, turned, removed, read, its renditions made (long-running)',
+  examples: ['media-bridge'],
+  returns: 'nothing; it runs until stopped, turning VFS mutations into the facts of media files.',
+};
+
+export default mediaBridge;
