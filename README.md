@@ -32,6 +32,14 @@ reads them through `@media/pictures` (the embedding types, where a file keeps th
 in their space) and `@media/picture-source` (what EMS reads a picture from).
 [architecture/pictures.md](architecture/pictures.md) says how.
 
+The text of every file in a folder that wants it (`text`, `transcripts`): a picture's read by
+`read-text` in `media-ocr`, a document's by `index-document` in `document-index`, a video's or a
+recording's transcript by `transcribe-file` in `media-transcribe` (WebVTT, `@media/transcript`),
+and their vectors, which `media-reembed` makes again in `media-embed-text`; `file-set-text`,
+`file-set-text-language` and `file-set-transcript` write them by hand. The bridge announces a
+transcript written and a text language set by hand (`TEXT_FACTS`, `@media/facts`); the archive's
+walk announces the gaps. [architecture/text.md](architecture/text.md) says how.
+
 The libraries other modules build on: `@media/probe` (what EMS says of a file), `@media/orientation`
 (the display frame and the pixel shape), `@media/storyboard`, `@media/chapters`, `@media/vtt`,
 `@media/writable`, the marker (`@media/rendition-marker`), the facts (`@media/facts`), whether

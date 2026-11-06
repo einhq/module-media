@@ -1,7 +1,8 @@
 /**
- * The media module's pipelines: a rendition pipeline's triggers name the `renditions` family and
- * the picture vectors' `picture-vectors`, so a folder that wants none gets none, and skip a source
- * nothing can decode; reading names none, since every family needs it. Every kind a step queues under in the media pool is one the module's own
+ * The media module's pipelines: each trigger names the family of work it does (`renditions`,
+ * `picture-vectors`, `text`, `transcripts`), so a folder that wants none gets none, and one that
+ * decodes the source skips a source nothing can decode; reading names none, since every family
+ * needs it. Every kind a step queues under in the media pool is one the module's own
  * drop-ins name for the workers, or its jobs would wait forever, and a model-bound step takes one
  * slot.
  */
@@ -9,7 +10,7 @@
 import { assertEquals } from '@std/assert';
 import { parse as parseYaml } from '@std/yaml';
 
-type Trigger = { on: string; wants?: string | string[]; skipIfAttr?: string };
+type Trigger = { on?: string; event?: string; wants?: string | string[]; skipIfAttr?: string };
 type PipelineFile = {
   trigger?: Trigger;
   triggers?: Trigger[];
@@ -36,23 +37,31 @@ const dropInKinds = async (worker: string): Promise<string[]> =>
     .filter(Boolean);
 
 /** The family each pipeline's triggers name, and why the others name none. */
-const FAMILIES: Record<string, string> = {
+const FAMILIES: Record<string, string | string[]> = {
+  'document-index.yaml': 'text',
   'media-embed-picture.yaml': 'picture-vectors',
+  'media-embed-text.yaml': ['text', 'transcripts'],
+  'media-ocr.yaml': 'text',
   'media-stills.yaml': 'renditions',
   'media-transcode.yaml': 'renditions',
+  'media-transcribe.yaml': 'transcripts',
 };
+/** The pipelines that decode the source, and so skip one nothing can decode. */
+const DECODING = new Set(['media-embed-picture.yaml', 'media-stills.yaml', 'media-transcode.yaml', 'media-transcribe.yaml']);
 const UNGATED: Record<string, string> = {
   'media-ingest.yaml': 'reads the file, which every family needs',
   'media-reindex.yaml': 'reads the file again when its bytes change, which every family needs',
 };
 
-Deno.test('every trigger names its family, and a gated pipeline skips a source nothing can decode', async () => {
+Deno.test('every trigger names its family, and a pipeline that decodes the source skips one nothing can decode', async () => {
   const found = await pipelines();
   assertEquals(found.map(([name]) => name), [...Object.keys(FAMILIES), ...Object.keys(UNGATED)].sort());
   for (const [name, definition] of found) {
     for (const trigger of definition.triggers ?? (definition.trigger ? [definition.trigger] : [])) {
+      const which = `${name}: ${trigger.on ?? trigger.event}`;
       if (name in UNGATED) assertEquals(trigger.wants, undefined, `${name}: ${UNGATED[name]}`);
-      else assertEquals([trigger.wants, trigger.skipIfAttr], [FAMILIES[name], 'undecodable'], `${name}: ${trigger.on}`);
+      else assertEquals(trigger.wants, FAMILIES[name], which);
+      if (DECODING.has(name)) assertEquals(trigger.skipIfAttr, 'undecodable', which);
     }
   }
 });

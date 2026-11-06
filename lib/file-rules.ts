@@ -1,6 +1,7 @@
 /**
  * VFS mutation -> the facts of a media file itself: it arrived, its bytes changed, it was turned or
- * removed, its metadata was read, its renditions were made. The media module's bridge
+ * removed, its metadata was read, its renditions were made, its transcript was written, the language
+ * of its text was set by hand. The media module's bridge
  * (`media-bridge`) derives them; what a file means in a family's world is other modules' facts,
  * which their own bridges derive from the same mutations.
  *
@@ -14,7 +15,7 @@
 
 import type { DomainEvent } from '@ein/client';
 import { DEV_PATH, ETC_PATH, isTrashPath, TEMP_PATH, USR_PATH, VAR_PATH } from '@ein/paths';
-import { RENDITION_FACTS } from '@media/facts';
+import { RENDITION_FACTS, TEXT_FACTS } from '@media/facts';
 import { RENDITIONS_AT_ATTR, RENDITIONS_FOR_ATTR } from '@media/rendition-marker';
 
 /** Who announced a fact derived here. */
@@ -157,6 +158,19 @@ const parentOf = (path: string): string => path.slice(0, path.lastIndexOf('/')) 
 const str = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
 const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
 
+/**
+ * What gets its text read: the documents `document-index` reads (its trigger's `filter` says the
+ * same, and a test holds the two together) and every picture, which `media-ocr` reads — a camera
+ * RAW through its preview.
+ */
+export const isTextIndexedMimetype = (mimetype: string): boolean =>
+  /^image\//.test(mimetype) || [
+    'application/pdf',
+    'text/plain',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.oasis.opendocument.text',
+  ].includes(mimetype);
+
 /** The attrs that turn a file by hand. */
 const MANUAL_ORIENTATION_ATTRS = ['angleManual', 'mirror'];
 
@@ -277,6 +291,53 @@ function deriveRenditionsMade(event: VfsEventInput, file: NodeSnapshot, now: num
 }
 
 /**
+ * The fact a hand-set text language of a read picture reveals. Only on the write that changed it,
+ * and only once the picture was read: before that, the reading it is queued for asks in it anyway.
+ */
+function deriveTextLanguageSet(event: VfsEventInput, file: NodeSnapshot, now: number): Omit<DomainEvent, 'id'>[] {
+  if (event.type !== 'updated' || !(event.changedAttrs ?? []).includes('ocrLanguageManual')) return [];
+  const mimetype = str(file.attrs.mimetype) ?? '';
+  if (!mimetype.startsWith('image/') || !str(file.attrs.textIndexedAt)) return [];
+  return [{
+    type: TEXT_FACTS.languageSet,
+    subject: event.path,
+    nodeId: file.id,
+    time: now,
+    source: SOURCE,
+    data: { mimetype, language: str(file.attrs.ocrLanguageManual) ?? null },
+  }];
+}
+
+/**
+ * `<file>/metadata/transcript` gaining its `transcribedAt`: a transcript finished. transcribe-file
+ * writes the cues first and the attrs with `transcribedAt` after, anew on every run, so this fires
+ * once per transcription — and never for a re-embed of its chunks, which writes only the vectors
+ * beneath it.
+ */
+async function deriveForTranscript(event: VfsEventInput, ctx: FileRuleContext, now: number): Promise<Omit<DomainEvent, 'id'>[]> {
+  const changed = event.type === 'created' || (event.type === 'updated' && (event.changedAttrs ?? ['transcribedAt']).includes('transcribedAt'));
+  if (!changed) return [];
+  const transcript = await ctx.getNode(event.path);
+  if (!transcript || !str(transcript.attrs.transcribedAt)) return [];
+  const filePath = parentOf(parentOf(event.path));
+  const file = await ctx.getNode(filePath);
+  if (!file || file.type !== 'file') return [];
+
+  return [{
+    type: TEXT_FACTS.transcriptGenerated,
+    subject: filePath,
+    nodeId: file.id,
+    time: now,
+    source: SOURCE,
+    data: {
+      mimetype: str(file.attrs.mimetype) ?? '',
+      speech: transcript.attrs.speech === true,
+      language: str(transcript.attrs.language) ?? '',
+    },
+  }];
+}
+
+/**
  * The fact a filled `metadata/exif` node reveals: the file's metadata is read. The node is created
  * empty and filled by a following update, so only the filled state is a fact. `exif-extract` writes
  * the file's own attrs before this node, so what starts on the fact finds them.
@@ -324,9 +385,10 @@ const factsOf = async (event: VfsEventInput, ctx: FileRuleContext, now: number):
   if (event.nodeType === 'exif') return event.type === 'deleted' ? [] : await deriveForExif(event.path, ctx, now);
   if (event.nodeType !== 'file') return [];
   if (event.type === 'deleted') return deriveForRemoval(event, now);
+  if (event.path.endsWith('/metadata/transcript')) return await deriveForTranscript(event, ctx, now);
 
   const file = await ctx.getNode(event.path);
   const primary = await deriveForFile(event.path, ctx, now, file);
   if (primary.length > 0 || !file) return primary;
-  return [...await deriveFileTurned(event, file, ctx, now), ...deriveRenditionsMade(event, file, now)];
+  return [...await deriveFileTurned(event, file, ctx, now), ...deriveRenditionsMade(event, file, now), ...deriveTextLanguageSet(event, file, now)];
 };

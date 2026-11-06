@@ -7,6 +7,7 @@
 import { assertEquals } from '@std/assert';
 import type { DomainEvent } from '@ein/client';
 import { deriveFileEvents, FILE_FACTS, type FileRuleContext, HOLD_ATTR, LANE_ATTR, type NodeSnapshot, type VfsEventInput } from '@media/file-rules';
+import { TEXT_FACTS } from '@media/facts';
 
 const LIBRARY = '/library/x';
 const IMG = `${LIBRARY}/a.jpg`;
@@ -150,4 +151,38 @@ Deno.test('a fact about a file in a folder of the bulk lane is in the bulk lane,
   const facts = await deriveFileEvents({ ...event('file', path), auditId: 'a1', uid: 7 }, ctx, 100);
   assertEquals(facts.map((fact) => [fact.type, fact.lane, fact.write]), [[FILE_FACTS.discovered, 'bulk', { auditId: 'a1', uid: 7 }]]);
   assertEquals((await deriveFileEvents(event('file', IMG), tree({ [IMG]: file('f1') }), 100))[0].lane, undefined);
+});
+
+Deno.test('a read picture whose text language is set by hand is announced; any other write is not', async () => {
+  const updated = (changedAttrs: string[]): VfsEventInput => ({ ...event('file', IMG, 'updated'), changedAttrs });
+  const set = (facts: Omit<DomainEvent, 'id'>[]) => facts.filter((fact) => fact.type === TEXT_FACTS.languageSet);
+  const picture = (attrs: Record<string, unknown>) => tree({ [IMG]: file('f1', attrs), [`${IMG}/metadata/exif`]: exif() });
+  const read = { textIndexedAt: '2026-10-19T10:00:00Z' };
+
+  const facts = set(await deriveFileEvents(updated(['ocrLanguageManual']), picture({ ...read, ocrLanguageManual: 'en' }), 100));
+  assertEquals(facts.map((fact) => [fact.subject, fact.data]), [[IMG, { mimetype: 'image/jpeg', language: 'en' }]]);
+  // Cleared, the language is told from the text again.
+  assertEquals(set(await deriveFileEvents(updated(['ocrLanguageManual']), picture(read), 100))[0].data?.language, null);
+  assertEquals(set(await deriveFileEvents(updated(['textIndexedAt', 'ocrBy']), picture({ ...read, ocrLanguageManual: 'en' }), 100)), []);
+  // Its text never read: the reading it waits for asks in the language anyway.
+  assertEquals(set(await deriveFileEvents(updated(['ocrLanguageManual']), picture({ ocrLanguageManual: 'en' }), 100)), []);
+});
+
+Deno.test('a transcript gaining its transcribedAt reports the recording, once per transcription', async () => {
+  const transcript = `${VID}/metadata/transcript`;
+  const nodes: Record<string, NodeSnapshot> = {
+    [VID]: file('f1', { mimetype: 'video/mp4' }),
+    [transcript]: { id: 't1', type: 'file', attrs: {} },
+  };
+  const ctx = tree(nodes);
+
+  // transcribe-file writes the cues first: nothing to announce yet.
+  assertEquals(await deriveFileEvents(event('file', transcript), ctx, 100), []);
+
+  nodes[transcript] = { id: 't1', type: 'file', attrs: { mimetype: 'text/vtt', transcribedAt: '2026-11-06T08:00:00Z', speech: true, language: 'sv' } };
+  const facts = await deriveFileEvents({ ...event('file', transcript, 'updated'), changedAttrs: ['mimetype', 'transcribedAt', 'speech', 'language'] }, ctx, 100);
+  assertEquals(facts.map((fact) => [fact.type, fact.subject, fact.data]), [[TEXT_FACTS.transcriptGenerated, VID, { mimetype: 'video/mp4', speech: true, language: 'sv' }]]);
+
+  // Its chunks are written beneath it; an update that leaves transcribedAt alone says nothing.
+  assertEquals(await deriveFileEvents({ ...event('file', transcript, 'updated'), changedAttrs: ['size'] }, ctx, 100), []);
 });

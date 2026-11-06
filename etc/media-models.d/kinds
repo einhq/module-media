@@ -3,3 +3,6 @@
 # `requires: models` is here, or it never runs (test/pipelines.test.ts).
 shots                    # a video's cuts, its chapters
 embed-picture            # picture vectors, for search by what a picture shows
+ocr                      # the text written in a picture
+embed-text               # vectors of a file's texts
+transcribe               # what is said in a video or recording
