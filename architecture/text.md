@@ -28,18 +28,18 @@ Plan: wow `history/ocr-language.md`.
 hand: it replaces `<file>/metadata/content` without `lines`, embeds it, and marks the file
 `textManual` with no `ocrBy`, so `media.ocr.stale` passes it by and `read-text` refuses it
 even with `-f`.
-Nothing under `/home/<user>/staging/` is read while it is staged: the triggers' `unless`
-skips it before any shell runs, so an import costs no OCR and no filter evaluation per write.
-The same `unless` leaves out EiN's own paths (`/var`, `/etc`, `/usr`, `/dev`, `/tmp`),
-dotfiles, a trash among them, and the pipeline's own `metadata/content`.
-A file is read when it leaves staging, by the `moved` trigger; staging's own filing (promote,
-`album add`) moves the files themselves, a `moved` event each. A directory moved out whole
+Nothing in a folder whose `processing` wants no `text` is read, a staging area among them: the
+triggers' `wants: text` skips it before any shell runs, so an import costs no OCR and no filter
+evaluation per write. The triggers' `unless` leaves out EiN's own paths (`/var`, `/etc`, `/usr`,
+`/dev`, `/tmp`), dotfiles, a trash among them, and the pipeline's own `metadata/content`.
+A file is read when it is moved into a folder that wants text, by the `moved` trigger; staging's
+own filing (promote, `album add`) moves the files themselves, a `moved` event each. A directory moved out whole
 publishes `moved` for the directory alone: the archive's bridge binds `directory.moved` and announces
 `media.text.missing` for each file within it that has no `textIndexedAt` (one subtree query,
 `deriveTextGap` per file). A write while the engine was down reaches no trigger: for that
 the archive's `media-scan` announces the same fact (the filter's mimetypes and every picture as
 `isTextIndexedMimetype`). The fact is a trigger of both pipelines, each for its mimetypes, with
-the same `unless`, so a directory moved within staging reads nothing. `textIndexedAt` is written whether text was found or not, so a file is read once.
+the same `wants` and `unless`, so a directory moved within staging reads nothing. `textIndexedAt` is written whether text was found or not, so a file is read once.
 
 The gaps — a file whose text was never read, a picture read by an older engine — are announced by
 the archive's walk over its albums (`media-scan`) for now, under these facts' names (`TEXT_FACTS`,

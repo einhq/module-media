@@ -1,22 +1,20 @@
 name: document-index
 description: Extract text and create embeddings for document files
 
-# One trigger body on two events: a file is indexed when it is written, and when it is moved,
-# which is how a staged file leaves staging unindexed. The third trigger is `media-scan`'s gap
-# for a file neither event reached; the fact is decided by the same mimetypes as the filter
-# (`isTextIndexedMimetype`), and the paths are excluded here as for the events.
+# One trigger body on two events: a file is indexed when it is written, and when it is moved, which
+# is how a file leaves a folder that wants no `text` for one that does. The third trigger is
+# `media-scan`'s gap for a file neither event reached; the fact is decided by the same mimetypes as
+# the filter (`isTextIndexedMimetype`), and the paths are excluded here as for the events.
 triggers:
   - &trigger
     event: updated
     nodeType: file
     wants: text
     # Paths never read, skipped before any shell runs: a write under one costs no filter
-    # evaluation however many there are. `*` is one name, `**` crosses `/`.
+    # evaluation however many there are, as under a folder that wants no `text`. `*` is one name,
+    # `**` crosses `/`. media-ocr leaves out the same paths for pictures.
     unless: &unread
       nodePath:
-        # A staged file is read once it is filed, not while it waits: an import of thousands of
-        # sidecars costs no extraction. media-ocr leaves out the same paths for pictures.
-        - '/home/*/staging/**'
         # EiN's own state, configuration and code: service logs, pipeline scratch and session
         # state are text/plain file nodes that every append writes again. Indexed, they would
         # spend model-server calls and put log noise into semantic search results.
@@ -25,7 +23,7 @@ triggers:
         - '/usr/**'
         - '/dev/**'
         - '/tmp/**'
-        # Dotfiles anywhere, a trash among them: a staged file put in the trash is moved to
+        # Dotfiles anywhere, a trash among them: a file put in the trash is moved to
         # /home/<user>/.trash/<entry>/, and shell history and settings are text files.
         - '**/.**'
         # A node's own metadata: index-document's output (metadata/content, text/plain), which

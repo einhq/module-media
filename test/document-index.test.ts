@@ -1,7 +1,7 @@
 /**
- * document-index reads no staged file: a write under `/home/<user>/staging` starts no instance
- * and runs no filter, whatever the file is, a staged file put in the trash neither, and a file
- * is indexed once it is moved out. A text file in a node's `metadata/`, such as an album's
+ * document-index reads no file in a folder that wants no `text`, as a staging area wants none: a
+ * write there starts no instance and runs no filter, whatever the file is, a staged file put in
+ * the trash neither, and a file is indexed once it is moved out. A text file in a node's `metadata/`, such as an album's
  * description, is never read.
  *
  * The definition is the module's own, defined into a booted instance with `index-document`
@@ -20,6 +20,7 @@ import { ulid } from '@std/ulid/ulid';
 import { assertEquals } from '@std/assert';
 import { parse as parseYaml } from '@std/yaml';
 import { ADMIN_ACCESS, SystemTestHarness } from '@ein/testing';
+import { PROCESSING_ATTR } from '@ein/client';
 
 const harness = new SystemTestHarness({ ssh: false, boot: true });
 
@@ -79,6 +80,7 @@ Deno.test({
     await writeFile('/opt/stub/index-document', 'echo "$1" >> /tmp/indexed\n');
     await client.exec(`echo 'export PATH="/opt/stub:$PATH"' >> /etc/bashrc`);
     await client.exec(`mkdir -p ${staged} && mkdir -p ${album}`);
+    await vfs.update(ADMIN_ACCESS, '/home/anna/staging', { attrs: { [PROCESSING_ATTR]: ['archive', 'renditions', 'picture-vectors', 'transcripts'] } });
 
     const definition = await Deno.readTextFile(DEFINITION);
     const filter = '    filter: |\n';

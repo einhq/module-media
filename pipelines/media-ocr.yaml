@@ -5,8 +5,8 @@
 # and in `document-index`'s inline lane it ran unbounded beside every crawl. After the EXIF, not on
 # the file's first write, so the picture is read the way it is shown (`angle`, `mirror`).
 #
-# A staged picture is read once it is filed, not while it waits: the paths `document-index` never
-# reads are left out here too, and a picture moved out of them is read on the move. A directory
+# A picture in a folder that wants no `text` is read once it is moved into one that
+# does, on the move; the paths `document-index` never reads are left out here too. A directory
 # moved whole publishes one event, for the directory, so its pictures arrive as
 # `media.text.missing`. `textIndexedAt` is the "already read" mark, written whether there was text
 # or not.
@@ -24,7 +24,6 @@ triggers:
     # The same paths as document-index's `unless`; see there for why each is left out.
     unless: &unread
       nodePath:
-        - '/home/*/staging/**'
         - '/var/**'
         - '/etc/**'
         - '/usr/**'
