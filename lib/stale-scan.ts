@@ -1,12 +1,12 @@
 /**
- * The walk behind the scans that heal by a marker (`renditions-scan`, `pictures-scan`): the files
- * a query finds whose marker is missing or names something no longer in force, each announced in
- * the bulk lane, as nobody waits on a repair.
+ * The walk behind the scans that heal by a marker (`renditions-scan`, `pictures-scan`, `text-scan`):
+ * the files a query finds whose marker is missing or names something no longer in force, each
+ * announced in the bulk lane, as nobody waits on a repair.
  *
  * Passed over: a rendition itself (it carries `sourceId`), a file nothing can decode, one with no
- * bytes, one whose metadata is not read yet (that is discovery's gap, `media-scan`'s), one in a
- * trash or in `/etc`, `/var` and the like, and one in a folder that does not want the scan's
- * family of processing (`processing`).
+ * bytes, a picture, video or recording whose metadata is not read yet (that is discovery's gap,
+ * `media-scan`'s), one in a trash or in `/etc`, `/var` and the like, one in a folder that wants
+ * none of the scan's families of processing (`processing`), and one the scan's own test refuses.
  */
 
 import { DEV_PATH, ETC_PATH, isTrashPath, TEMP_PATH, USR_PATH, VAR_PATH } from '@ein/paths';
@@ -18,6 +18,9 @@ import { UNDECODABLE_ATTR } from '@media/probe';
 /** Files one query page returns. */
 const PAGE = 500;
 
+/** The files whose metadata is read before anything else is made of them. */
+const MEDIA_MIMETYPE = /^(image|video|audio)\//;
+
 /** The trees that hold no one's media. */
 const NOT_MEDIA = [ETC_PATH, VAR_PATH, USR_PATH, DEV_PATH, TEMP_PATH];
 
@@ -26,8 +29,12 @@ type StaleScan = {
   source: string;
   /** The fact announced for each file. */
   fact: string;
-  /** The family of processing a file's folder wants for the file to be announced. */
-  family: string;
+  /** The families of processing a file's folder wants one of for the file to be announced. */
+  families: string[];
+  /** Whether a file at the path is announced at all; every file when absent. */
+  admits?: (path: string) => boolean;
+  /** Paths passed over: those another scan of the same run announced, say. */
+  skip?: Set<string>;
   /** The tree to look in, `/` for every one. */
   root: string;
   /** Facts one run announces at most; 0 for no cap. */
@@ -69,10 +76,12 @@ export const scanStale = async (cmd: Command, scan: StaleScan, queries: StaleQue
     if (seen.has(path)) return true;
     seen.add(path);
     result.examined++;
-    if (isTrashPath(path) || !(Number(node.attrs.size ?? 0) > 0)) return true;
-    if (!wantsProcessing(roots, path, [scan.family])) return true;
-    const exif = await cmd.sys.vfs.get(cmd.access, `${path}/metadata/exif`).catch(() => undefined);
-    if (!exif?.attrs.indexedAt) return true;
+    if (scan.skip?.has(path) || isTrashPath(path) || !(Number(node.attrs.size ?? 0) > 0)) return true;
+    if ((scan.admits && !scan.admits(path)) || !wantsProcessing(roots, path, scan.families)) return true;
+    if (MEDIA_MIMETYPE.test(String(node.attrs.mimetype ?? ''))) {
+      const exif = await cmd.sys.vfs.get(cmd.access, `${path}/metadata/exif`).catch(() => undefined);
+      if (!exif?.attrs.indexedAt) return true;
+    }
     if (scan.limit > 0 && result.announced.length >= scan.limit) {
       result.limited = true;
       return false;

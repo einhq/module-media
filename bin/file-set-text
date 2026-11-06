@@ -8,6 +8,7 @@
  * embeds it later. The read lines (`lines`) go with the reading they came from.
  * The file is marked `textManual`, which `read-text` leaves alone, and loses `ocrBy`, since no
  * engine's reading is kept any more. Empty text removes the text, and the mark keeps it removed.
+ * Its text vectors are settled last (`textVectorsBy`, `@media/text-markers`).
  *
  * `--text-base64` is what the UI uses, as for `file-set-description`: the text is arbitrary
  * multi-line text on its way into a shell command string.
@@ -15,6 +16,7 @@
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
 import { clearExtractedText, storeExtractedText } from '@media/extracted-text';
+import { settleTextVectors } from '@media/text-markers';
 import { reportUnwritable } from '@media/writable';
 import { decodeBase64 } from '@std/encoding/base64';
 import { resolve } from '@std/path';
@@ -77,6 +79,7 @@ const fileSetText = async (cmd: Command): CmdReturn => {
         ...(typeof node.attrs.textIndexedAt === 'string' && node.attrs.textIndexedAt ? {} : { textIndexedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z') }),
       },
     });
+    await settleTextVectors(cmd, path, unembedded ? null : undefined);
   } catch (error) {
     await cmd.writeError(`file-set-text: ${path}: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

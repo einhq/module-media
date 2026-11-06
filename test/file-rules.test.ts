@@ -5,8 +5,9 @@
  */
 
 import { assertEquals } from '@std/assert';
+import { parse as parseYaml } from '@std/yaml';
 import type { DomainEvent } from '@ein/client';
-import { deriveFileEvents, FILE_FACTS, type FileRuleContext, HOLD_ATTR, LANE_ATTR, type NodeSnapshot, type VfsEventInput } from '@media/file-rules';
+import { deriveFileEvents, FILE_FACTS, type FileRuleContext, HOLD_ATTR, isTextReadPath, LANE_ATTR, type NodeSnapshot, type VfsEventInput } from '@media/file-rules';
 import { TEXT_FACTS } from '@media/facts';
 
 const LIBRARY = '/library/x';
@@ -185,4 +186,74 @@ Deno.test('a transcript gaining its transcribedAt reports the recording, once pe
 
   // Its chunks are written beneath it; an update that leaves transcribedAt alone says nothing.
   assertEquals(await deriveFileEvents({ ...event('file', transcript, 'updated'), changedAttrs: ['size'] }, ctx, 100), []);
+});
+
+Deno.test('a directory moved whole announces the text gap of each unread file within it, where text is read', async () => {
+  const dir = `${LIBRARY}/trip`;
+  const within: Record<string, NodeSnapshot> = {
+    [`${dir}/menu.pdf`]: file('f1', { mimetype: 'application/pdf' }),
+    [`${dir}/day-2/IMG_0001.jpg`]: file('f2'),
+    [`${dir}/IMG_0002.cr2`]: file('f3', { mimetype: 'image/x-canon-cr2' }),
+    [`${dir}/clip.mp4`]: file('f4', { mimetype: 'video/mp4' }),
+    [`${dir}/IMG_0003.jpg/thumbnails/320.avif`]: file('f5', { mimetype: 'image/avif', sourceId: 'f6' }),
+    [`${dir}/.hidden/IMG_0004.jpg`]: file('f7'),
+  };
+  const asked: string[] = [];
+  const ctx: FileRuleContext = {
+    ...tree({}),
+    unreadFilesWithin: (path) => {
+      asked.push(path);
+      return Promise.resolve(Object.entries(within).map(([path, node]) => ({ path, node })));
+    },
+  };
+
+  const facts = await deriveFileEvents(event('directory', dir, 'moved'), ctx, 100);
+
+  assertEquals(asked, [dir]);
+  assertEquals(facts.map((fact) => [fact.type, fact.subject, fact.data]), [
+    [TEXT_FACTS.textMissing, `${dir}/menu.pdf`, { mimetype: 'application/pdf' }],
+    [TEXT_FACTS.textMissing, `${dir}/day-2/IMG_0001.jpg`, { mimetype: 'image/jpeg' }],
+    [TEXT_FACTS.textMissing, `${dir}/IMG_0002.cr2`, { mimetype: 'image/x-canon-cr2' }],
+  ]);
+  // Any other change to a directory is not a move, and a move with nothing to ask reveals nothing.
+  assertEquals(await deriveFileEvents(event('directory', dir, 'updated'), ctx, 100), []);
+  assertEquals(await deriveFileEvents(event('directory', dir, 'moved'), tree({}), 100), []);
+  assertEquals(asked, [dir]);
+});
+
+Deno.test('a hand-written description set or changed is a text gap; one cleared, and any other write, is not', async () => {
+  const described = (changed: string[], attrs: Record<string, unknown>) =>
+    deriveFileEvents({ ...event('file', IMG, 'updated'), changedAttrs: changed }, tree({ [IMG]: file('f1', attrs), [`${IMG}/metadata/exif`]: exif() }), 100);
+
+  const facts = await described(['description'], { description: 'Anna at the helm' });
+  assertEquals(facts.map((fact) => [fact.type, fact.subject, fact.data]), [[TEXT_FACTS.textEmbeddingStale, IMG, { mimetype: 'image/jpeg', stale: ['authored'] }]]);
+  assertEquals(await described(['description'], { description: '  ' }), []);
+  assertEquals(await described(['description'], {}), []);
+  assertEquals(await described(['title'], { description: 'Anna at the helm' }), []);
+});
+
+Deno.test("isTextReadPath leaves out the paths document-index's and media-ocr's triggers do", async () => {
+  type Trigger = { unless?: { nodePath?: string[] } };
+  const read = async (name: string) => (parseYaml(await Deno.readTextFile(new URL(`../pipelines/${name}`, import.meta.url))) as { triggers: Trigger[] }).triggers;
+  const globs = [...(await read('document-index.yaml')), ...(await read('media-ocr.yaml'))].flatMap((trigger) => trigger.unless?.nodePath ?? []);
+  // A path glob as the engine reads one: `*` within one name, `**` across `/`.
+  const pathGlob = (glob: string) =>
+    new RegExp(`^${glob.split('**').map((part) => part.split('*').map((text) => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')}$`);
+  const unread = [...new Set(globs)].map(pathGlob);
+  const paths = [
+    `${LIBRARY}/a.jpg`,
+    `${LIBRARY}/letters/menu.pdf`,
+    '/home/anna/photos/a.jpg',
+    '/home/anna/staging/files/a.jpg',
+    '/home/anna/staging/genealogy/tree.txt',
+    '/home/anna/.trash/01J/a.jpg',
+    `${LIBRARY}/.cache/a.jpg`,
+    `${LIBRARY}/a.pdf/metadata/content`,
+    '/var/logs/jobs/1/stdout.log',
+    '/etc/notes.txt',
+    '/usr/modules/x/a.png',
+    '/dev/events',
+    '/tmp/a.jpg',
+  ];
+  for (const path of paths) assertEquals(isTextReadPath(path), !unread.some((pattern) => pattern.test(path)), path);
 });

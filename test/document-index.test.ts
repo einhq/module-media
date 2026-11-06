@@ -9,7 +9,7 @@
  * watch staging, the trash and metadata without `unless` show each event reached the definitions, so
  * document-index's silence is a verdict, not a delay.
  *
- * A file no event reached is `media-scan`'s gap, `media.text.missing`, decided in TypeScript by
+ * A file no event reached is `text-scan`'s gap, `media.text.missing`, decided in TypeScript by
  * `isTextIndexedMimetype`; the last steps hold that to the filter and to media-ocr's triggers for
  * pictures, and the fact's trigger to the same paths as the events'.
  */
@@ -200,7 +200,7 @@ Deno.test({
       await waitFor(() => hasInstance('document-index', id), 'instance for the moved file');
     });
 
-    await t.step('the filter takes the documents media-scan announces a text gap for, and no picture', async () => {
+    await t.step('the filter takes the documents text-scan announces a text gap for, and no picture', async () => {
       const { triggers } = parseYaml(await Deno.readTextFile(DEFINITION)) as { triggers: { filter?: string }[] };
       const filter = triggers[0].filter ?? '';
       const mimetypes = [
@@ -224,7 +224,7 @@ Deno.test({
       }
     });
 
-    await t.step('media-ocr reads every picture media-scan announces a text gap for, outside the same paths', async () => {
+    await t.step('media-ocr reads every picture text-scan announces a text gap for, outside the same paths', async () => {
       type Trigger = { on?: string | string[]; match?: { mimetype?: string }; unless?: { nodePath?: string[] } };
       const documents = (parseYaml(await Deno.readTextFile(DEFINITION)) as { triggers: Trigger[] }).triggers;
       const pictures = (parseYaml(await Deno.readTextFile(OCR_DEFINITION)) as { triggers: Trigger[] }).triggers;

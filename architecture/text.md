@@ -12,7 +12,7 @@ XMP sidecars are not documents. Pictures are `media-ocr`'s: `read-text` on the m
 pool (kind `ocr`), after `media.metadata.extracted` so the picture is read in its display frame,
 and on a `moved`. It asks EMS `ocr.read` (PP-OCRv6) for the original's lines and keeps them
 beside the text, `lines` on `<file>/metadata/content` (each line's words, four corners as
-fractions of the picture, and score), and stamps the file `ocrBy`. The archive's `media-scan` announces
+fractions of the picture, and score), and stamps the file `ocrBy`. `text-scan` announces
 `media.ocr.stale` for a read picture whose `ocrBy` names another engine than EMS names in
 `capabilities.models.ocr`, or none, and `media-ocr` reads it again with `-f`; a reading without
 text removes the old one. A picture never read has no `textIndexedAt` and is
@@ -33,17 +33,14 @@ triggers' `wants: text` skips it before any shell runs, so an import costs no OC
 evaluation per write. The triggers' `unless` leaves out EiN's own paths (`/var`, `/etc`, `/usr`,
 `/dev`, `/tmp`), dotfiles, a trash among them, and the pipeline's own `metadata/content`.
 A file is read when it is moved into a folder that wants text, by the `moved` trigger; staging's
-own filing (promote, `album add`) moves the files themselves, a `moved` event each. A directory moved out whole
-publishes `moved` for the directory alone: the archive's bridge binds `directory.moved` and announces
-`media.text.missing` for each file within it that has no `textIndexedAt` (one subtree query,
-`deriveTextGap` per file). A write while the engine was down reaches no trigger: for that
-the archive's `media-scan` announces the same fact (the filter's mimetypes and every picture as
-`isTextIndexedMimetype`). The fact is a trigger of both pipelines, each for its mimetypes, with
-the same `wants` and `unless`, so a directory moved within staging reads nothing. `textIndexedAt` is written whether text was found or not, so a file is read once.
-
-The gaps — a file whose text was never read, a picture read by an older engine — are announced by
-the archive's walk over its albums (`media-scan`) for now, under these facts' names (`TEXT_FACTS`,
-`@media/facts`).
+own filing (promote, `album add`) moves the files themselves, a `moved` event each. A directory
+moved out whole publishes `moved` for the directory alone: the media bridge binds
+`directory.moved` and announces `media.text.missing` for each file within it that has no
+`textIndexedAt` and whose text is read there (one subtree query; `isTextIndexedMimetype` and
+`isTextReadPath`, `@media/file-rules`). A write while the engine was down reaches no trigger: for
+that `text-scan` announces the same fact. The fact is a trigger of both pipelines, each for its
+mimetypes, with the same `wants` and `unless`, so a directory moved within staging reads nothing.
+`textIndexedAt` is written whether text was found or not, so a file is read once.
 
 ## The text space
 
@@ -67,18 +64,57 @@ transcript whose chunks are not embedded yet is found by neither, until `media-r
 What a text is and where it came from
 is on its **text node**: a transcript's `transcribedBy`, `transcribedWith` and `transcribedAt`,
 the last written once the cues are, are both the "already transcribed" marker (the transcribe
-pipeline's guard, `transcribe-file`'s own skip, the staleness rule) and what announces a transcript
+pipeline's guard, `transcribe-file`'s own skip) and what announces a transcript
 (`media.transcript.generated` fires when `transcribedAt` is written). So a new embedding model is a
 re-embed and never a re-transcription: `media-reembed` walks the text nodes and embeds what is
-missing or another model's, from the stored text alone. `media-scan` announces
-`media.text-embedding.stale` for a media file whose extracted text, transcript
-(also when cut at another `chunkSeconds`) or hand-written description has no vector from the
-embedder EMS runs now (`generations()` in `@ems/client`), naming which in `data.stale`; `media-embed-text`
-runs `media-reembed <file>`, the same rules for that one file. A text with nothing to embed (an
-empty text node, a transcript with `speech: false`) is never announced. Search has a
-floor of 0.35 on this space, measured on the retrieval eval's judgements.
+missing or another model's, from the stored text alone, and `media-reembed <file>` does the same
+for one file. Search has a floor of 0.35 on this space, measured on the retrieval eval's
+judgements.
 `@ems/text-embedding` (module-ems's `lib/text-embedding.ts`) holds the types, the layout and the
 query side.
+
+## Keeping them current
+
+Each gap is found by a marker on the file (`@media/text-markers`), so a query finds it in every
+tree rather than a walk of one:
+
+- `ocrBy` and `textIndexedAt`, above: a picture never read, or read by another engine.
+- `transcriptWith`, written by `transcribe-file` last: the decode settings its transcript was made
+  with (the node's `transcribedWith`), or `kept` for one no change of settings redoes — written by
+  hand (`file-set-transcript`), or of a file with no sound.
+- `textVectorsBy`: the text embedder every text of the file has a current vector from — its
+  extracted text, its transcript (cut at `CHUNK_TARGET_SECONDS`) and its hand-written description
+  (by its hash). Every command that writes a text or its vector settles it last
+  (`settleTextVectors`): `read-text`, `index-document`, `file-set-text`, `transcribe-file`,
+  `file-set-transcript`, `media-reembed <file>`; one whose embed failed leaves the file unmarked. A
+  text with nothing to embed (an empty text node, a transcript with `speech: false`) is never
+  stale. A description written by another command is the bridge's: a change of `description` on a
+  file is announced as `media.text-embedding.stale`, and `media-reembed` embeds it unless its
+  vector already carries the text's hash.
+
+The `text-heal` service runs `text-scan --if-idle --limit 0` every hour, the first an hour after it
+starts: a pass before the module's pipelines are set up would match its facts against the
+definitions they replace. The scan announces, in the bulk lane:
+
+- `media.transcript.stale` for a video or a recording whose `transcriptWith` is missing or names
+  other settings than EMS runs now (`generations().transcribe`) and is not `kept`.
+  `media-transcribe` runs `transcribe-file` without `-f`, which keeps a finished transcript made
+  with the settings in force, or with none to compare while EMS cannot say, marking the file, and
+  transcribes the rest. `CFG_MEDIA_TRANSCRIPTS_CURRENT=off` leaves existing transcripts alone: the
+  scan announces only a file with no marker, and `transcribe-file` keeps what it finds.
+- `media.ocr.stale` for a read picture whose `ocrBy` is not EMS's engine, and not written by hand.
+- `media.text.missing` for a picture or a document whose text is read and never was.
+- `media.text-embedding.stale` for a file that may hold a text — read, a video or a recording, or
+  described by hand — whose `textVectorsBy` is not the embedder EMS runs now; `media-embed-text`
+  runs `media-reembed <file>`. A file the same pass announced for its transcript or its reading
+  waits for the next: what those write is embedded as it is written.
+
+Each fact whose pipeline has work waiting is held back, and a fact whose check needs what EMS runs
+now is announced for no file while EMS does not say. The text facts are passed over where their
+pipelines do not read (`isTextReadPath`), and every fact as `@media/stale-scan` passes over and in a
+folder that wants none of its families (`processing`).
+
+## The transcript
 
 The transcript is WebVTT rather than a JSON of segments because that is the format `<video>` already
 understands: `get-file` serves the node with the mimetype it carries, so the lightbox's video
@@ -95,5 +131,3 @@ reading an attr per hit would put a node read back on the search path. The timec
 `atSeconds` on the search hit, and the lightbox opens the player there. Composition rules
 (WebVTT in and out, chunking, chunk-path resolution) are pure and tested in
 [lib/transcript.ts](../lib/transcript.ts).
-
-The gaps of transcripts and text vectors are announced by the archive's walk for now, as above.

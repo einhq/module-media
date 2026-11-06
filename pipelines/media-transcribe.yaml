@@ -25,14 +25,13 @@ triggers:
     skipIfExists: $NODE_PATH/metadata/transcript
     skipIfAttr: undecodable
 
-  # Emitted by the scan for a transcript made with other whisper settings than EMS runs now, or
-  # left without `transcribedAt`. The fact is the guard, so there is no skipIfExists; the backfill
-  # priority keeps it behind newly imported media.
+  # Announced by `text-scan` for a file whose marker (`transcriptWith`) is missing or names other
+  # whisper settings than EMS runs now. The fact is the guard, so there is no skipIfExists, and no
+  # FORCE: `transcribe-file` keeps a transcript made with the settings in force, marking the file,
+  # and transcribes the rest. The backfill priority keeps it behind newly imported media.
   - on: media.transcript.stale
     wants: transcripts
     skipIfAttr: undecodable
-    vars:
-      FORCE: -f
     priority: 10
 
 steps:

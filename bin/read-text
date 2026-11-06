@@ -6,6 +6,7 @@ import { EmsError, generations, readText, type ReadTextResult, stepExitCode } fr
 import { UNDECODABLE_ATTR } from '@media/probe';
 import { normalizeAngle, normalizeMirror } from '@media/orientation';
 import { clearExtractedText, storeExtractedText } from '@media/extracted-text';
+import { settleTextVectors } from '@media/text-markers';
 import { reportUnwritable } from '@media/writable';
 
 /**
@@ -107,8 +108,8 @@ const readTextCommand = async (cmd: Command): CmdReturn => {
 
   const text = result?.text.trim() ?? '';
   const wordCount = text ? text.split(/\s+/).length : 0;
+  let unstored: string | undefined;
   if (text) {
-    let unstored: string | undefined;
     try {
       const language = result!.language;
       unstored = await storeExtractedText(cmd, inputPath, text, {
@@ -126,10 +127,12 @@ const readTextCommand = async (cmd: Command): CmdReturn => {
     await clearExtractedText(cmd, inputPath);
   }
 
-  // Last, so an interrupted run leaves a file the trigger reads again.
+  // Last, so an interrupted run leaves a file the trigger reads again; then its text vectors are
+  // settled, a text not embedded leaving it unmarked without asking EMS again.
   await cmd.sys.vfs.update(cmd.access, inputPath, {
     attrs: { textIndexedAt: indexedAt, ocrBy: readBy, wordCount: wordCount || null },
   });
+  await settleTextVectors(cmd, inputPath, unstored ? null : undefined);
 
   if (cmd.json) {
     await cmd.writeJSON({ textIndexedAt: indexedAt, ocrBy: readBy, lines: result?.lines.length ?? 0, wordCount, language: text ? result?.language?.code ?? null : null });

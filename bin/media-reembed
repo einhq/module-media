@@ -21,9 +21,10 @@
  * and a model change redoes everything. Nothing but the vector is written: a text's provenance is
  * on its text node.
  *
- * Given paths, it does the same for those files only, and walks nothing: the step behind
- * `media.text-embedding.stale`, which `media-scan` announces for a file whose texts lack a current
- * vector.
+ * Given paths, it does the same for those files only, and walks nothing, and then marks each file
+ * with the embedder when every text of it has a vector from it (`textVectorsBy`,
+ * `@media/text-markers`): the step behind `media.text-embedding.stale`, which `text-scan` announces
+ * for a file not so marked.
  */
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags, shq, STEP_EXIT_TEMPORARY, verifyAccess } from '@ein/client';
@@ -42,6 +43,7 @@ import {
   textEmbeddingType,
   writeTextVector,
 } from '@ems/text-embedding';
+import { settleTextVectors } from '@media/text-markers';
 import { CHUNK_TARGET_SECONDS, chunkSegments, chunkVectors, parseVtt } from '@media/transcript';
 
 /** Legacy vectors looked at per store page. */
@@ -304,6 +306,7 @@ const mediaReembed = async (cmd: Command): CmdReturn => {
       await embedTexts(items);
       const authored = String(node.attrs.description ?? '').trim();
       if (node.type === 'file' && authored && await authoredDue(path, authored)) await embedAuthored([{ file: path, text: authored }]);
+      await settleTextVectors(cmd, path, generation);
     }
   }
 

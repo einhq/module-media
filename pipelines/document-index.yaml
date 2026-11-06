@@ -2,9 +2,10 @@ name: document-index
 description: Extract text and create embeddings for document files
 
 # One trigger body on two events: a file is indexed when it is written, and when it is moved, which
-# is how a file leaves a folder that wants no `text` for one that does. The third trigger is
-# `media-scan`'s gap for a file neither event reached; the fact is decided by the same mimetypes as
-# the filter (`isTextIndexedMimetype`), and the paths are excluded here as for the events.
+# is how a file leaves a folder that wants no `text` for one that does. The third trigger is the gap
+# of a file neither event reached, which `text-scan` and the bridge (a directory moved whole)
+# announce; the fact is decided by the same mimetypes as the filter (`isTextIndexedMimetype`), and
+# the paths are excluded here as for the events (`isTextReadPath`).
 triggers:
   - &trigger
     event: updated

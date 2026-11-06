@@ -1,7 +1,8 @@
 /**
  * VFS mutation -> the facts of a media file itself: it arrived, its bytes changed, it was turned or
  * removed, its metadata was read, its renditions were made, its transcript was written, the language
- * of its text was set by hand. The media module's bridge
+ * of its text was set by hand, its hand-written description changed, and the unread files a moved
+ * directory carried. The media module's bridge
  * (`media-bridge`) derives them; what a file means in a family's world is other modules' facts,
  * which their own bridges derive from the same mutations.
  *
@@ -110,13 +111,18 @@ export const withLanes = async (facts: Omit<DomainEvent, 'id'>[], ctx: FileRuleC
   return stamped;
 };
 
-/** VFS routing keys the media bridge binds: the file writes and removals, and the metadata node's writes. */
+/**
+ * VFS routing keys the media bridge binds: the file writes and removals, the metadata node's writes,
+ * and a directory moved whole, which publishes this event for the directory alone, none for the
+ * files in it.
+ */
 export const MEDIA_BRIDGE_ROUTING_KEYS = [
   'system.vfs.file.created',
   'system.vfs.file.updated',
   'system.vfs.file.deleted',
   'system.vfs.exif.created',
   'system.vfs.exif.updated',
+  'system.vfs.directory.moved',
 ];
 
 /** A node as a rule sees it. */
@@ -151,6 +157,12 @@ export type VfsEventInput = {
 export type FileRuleContext = {
   getNode(path: string): Promise<NodeSnapshot | undefined>;
   exists(path: string): Promise<boolean>;
+  /**
+   * Every file within the directory at `path` (`NodeQuery.within`) that has no `textIndexedAt`,
+   * with its absolute path: what a directory moved whole brings along. Without it a move reveals
+   * nothing.
+   */
+  unreadFilesWithin?(path: string): Promise<{ path: string; node: NodeSnapshot }[]>;
 };
 
 const parentOf = (path: string): string => path.slice(0, path.lastIndexOf('/')) || '/';
@@ -163,13 +175,23 @@ const num = (value: unknown): number | undefined => (typeof value === 'number' ?
  * same, and a test holds the two together) and every picture, which `media-ocr` reads — a camera
  * RAW through its preview.
  */
-export const isTextIndexedMimetype = (mimetype: string): boolean =>
-  /^image\//.test(mimetype) || [
-    'application/pdf',
-    'text/plain',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.oasis.opendocument.text',
-  ].includes(mimetype);
+export const isTextIndexedMimetype = (mimetype: string): boolean => /^image\//.test(mimetype) || TEXT_DOCUMENT_MIMETYPES.includes(mimetype);
+
+/** The documents whose text `document-index` reads. */
+export const TEXT_DOCUMENT_MIMETYPES = [
+  'application/pdf',
+  'text/plain',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.oasis.opendocument.text',
+];
+
+/**
+ * Whether the text of a file at `path` is read where it lies: not in EiN's own trees, a dot folder
+ * (a trash among them) or a node's `metadata/`. `document-index` and `media-ocr` leave out the same
+ * paths (their `unless`), and a test holds them together; a folder that wants no `text` (a staging
+ * area) is their `wants`, and a scan's.
+ */
+export const isTextReadPath = (path: string): boolean => isMediaPath(path) && !path.split('/').some((segment) => segment.startsWith('.')) && !path.includes('/metadata/');
 
 /** The attrs that turn a file by hand. */
 const MANUAL_ORIENTATION_ATTRS = ['angleManual', 'mirror'];
@@ -338,6 +360,46 @@ async function deriveForTranscript(event: VfsEventInput, ctx: FileRuleContext, n
 }
 
 /**
+ * The text gap of a file whose text is read (`isTextIndexedMimetype`, `isTextReadPath`) and never
+ * was: no `textIndexedAt`, which `index-document` and `read-text` write whether they found text or
+ * not.
+ */
+const deriveTextGap = (filePath: string, file: NodeSnapshot, now: number): Omit<DomainEvent, 'id'>[] => {
+  const mimetype = str(file.attrs.mimetype) ?? '';
+  if (file.type !== 'file' || file.attrs.sourceId || (num(file.attrs.size) ?? 0) === 0 || !isTextReadPath(filePath)) return [];
+  if (!isTextIndexedMimetype(mimetype) || str(file.attrs.textIndexedAt)) return [];
+  return [{ type: TEXT_FACTS.textMissing, subject: filePath, nodeId: file.id, time: now, source: SOURCE, data: { mimetype } }];
+};
+
+/**
+ * The text gap of every file a directory moved whole carried along. The move publishes one event,
+ * for the directory, so this is the only fact that reaches those files: a folder filed out of
+ * staging is read here.
+ */
+async function deriveForDirectoryMove(dirPath: string, ctx: FileRuleContext, now: number): Promise<Omit<DomainEvent, 'id'>[]> {
+  if (!ctx.unreadFilesWithin) return [];
+  return (await ctx.unreadFilesWithin(dirPath)).flatMap(({ path, node }) => deriveTextGap(path, node, now));
+}
+
+/**
+ * The fact a file's hand-written description changing reveals: its vector may be another text's now.
+ * Only on the write that changed it, and only for a description that is there: `media-reembed`
+ * embeds it unless its vector already carries the text's hash, whoever wrote it.
+ */
+function deriveDescriptionSet(event: VfsEventInput, file: NodeSnapshot, now: number): Omit<DomainEvent, 'id'>[] {
+  if (event.type !== 'updated' || !(event.changedAttrs ?? []).includes('description')) return [];
+  if (!str(file.attrs.description)?.trim() || file.attrs.sourceId) return [];
+  return [{
+    type: TEXT_FACTS.textEmbeddingStale,
+    subject: event.path,
+    nodeId: file.id,
+    time: now,
+    source: SOURCE,
+    data: { mimetype: str(file.attrs.mimetype) ?? '', stale: ['authored'] },
+  }];
+}
+
+/**
  * The fact a filled `metadata/exif` node reveals: the file's metadata is read. The node is created
  * empty and filled by a following update, so only the filled state is a fact. `exif-extract` writes
  * the file's own attrs before this node, so what starts on the fact finds them.
@@ -383,6 +445,7 @@ export async function deriveFileEvents(event: VfsEventInput, ctx: FileRuleContex
 const factsOf = async (event: VfsEventInput, ctx: FileRuleContext, now: number): Promise<Omit<DomainEvent, 'id'>[]> => {
   if (!isMediaPath(event.path)) return [];
   if (event.nodeType === 'exif') return event.type === 'deleted' ? [] : await deriveForExif(event.path, ctx, now);
+  if (event.nodeType === 'directory') return event.type === 'moved' ? await deriveForDirectoryMove(event.path, ctx, now) : [];
   if (event.nodeType !== 'file') return [];
   if (event.type === 'deleted') return deriveForRemoval(event, now);
   if (event.path.endsWith('/metadata/transcript')) return await deriveForTranscript(event, ctx, now);
@@ -390,5 +453,10 @@ const factsOf = async (event: VfsEventInput, ctx: FileRuleContext, now: number):
   const file = await ctx.getNode(event.path);
   const primary = await deriveForFile(event.path, ctx, now, file);
   if (primary.length > 0 || !file) return primary;
-  return [...await deriveFileTurned(event, file, ctx, now), ...deriveRenditionsMade(event, file, now), ...deriveTextLanguageSet(event, file, now)];
+  return [
+    ...await deriveFileTurned(event, file, ctx, now),
+    ...deriveRenditionsMade(event, file, now),
+    ...deriveTextLanguageSet(event, file, now),
+    ...deriveDescriptionSet(event, file, now),
+  ];
 };

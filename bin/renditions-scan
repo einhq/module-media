@@ -101,7 +101,7 @@ const renditionsScan = async (cmd: Command): CmdReturn => {
   const { examined, announced, limited } = await scanStale(cmd, {
     source: 'renditions-scan',
     fact: RENDITION_FACTS.stale,
-    family: 'renditions',
+    families: ['renditions'],
     root,
     limit,
     dry,

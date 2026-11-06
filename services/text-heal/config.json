@@ -1,0 +1,5 @@
+{
+  "description": "Runs text-scan every hour, which announces every file, in any tree, whose text was never read, whose reading or transcript is not what EMS makes now, or whose text vectors are missing or another model's, unless that work is waiting",
+  "restartPolicy": "on-failure",
+  "workClass": "background"
+}

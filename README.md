@@ -37,8 +37,13 @@ The text of every file in a folder that wants it (`text`, `transcripts`): a pict
 recording's transcript by `transcribe-file` in `media-transcribe` (WebVTT, `@media/transcript`),
 and their vectors, which `media-reembed` makes again in `media-embed-text`; `file-set-text`,
 `file-set-text-language` and `file-set-transcript` write them by hand. The bridge announces a
-transcript written and a text language set by hand (`TEXT_FACTS`, `@media/facts`); the archive's
-walk announces the gaps. [architecture/text.md](architecture/text.md) says how.
+transcript written, a text language or a description set by hand, and the unread files of a
+directory moved whole (`TEXT_FACTS`, `@media/facts`). A file is marked with what its transcript and
+its text vectors were made with (`transcriptWith`, `textVectorsBy`, `@media/text-markers`), and
+the `text-heal` service runs `text-scan` every hour to announce the files whose text was never
+read, whose reading, transcript or vectors are not what EMS makes now; `CFG_MEDIA_TRANSCRIPTS_CURRENT`
+set to `off` leaves the transcripts there are alone. [architecture/text.md](architecture/text.md)
+says how.
 
 The libraries other modules build on: `@media/probe` (what EMS says of a file), `@media/orientation`
 (the display frame and the pixel shape), `@media/storyboard`, `@media/chapters`, `@media/vtt`,

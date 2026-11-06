@@ -4,6 +4,7 @@ import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags, shq, stepPhase } from '@ein/client';
 import { EmsError, extractText, stepExitCode } from '@ems/client';
 import { storeExtractedText } from '@media/extracted-text';
+import { settleTextVectors } from '@media/text-markers';
 import { reportUnwritable } from '@media/writable';
 
 type ExtractResult = {
@@ -17,15 +18,17 @@ type ExtractResult = {
 const summarize = (text: string): string => text.slice(0, 500).trim();
 
 /**
- * Mark a file as having been through text extraction.
+ * Mark a file as having been through text extraction, and settle its text vectors: `unstored`
+ * says its text was not embedded, which leaves it unmarked without asking EMS again.
  *
  * This attr, and nothing else, is what stops the file being picked up again — by the skipIf of
  * document-index and by every later crawl. A file with no text gets it and nothing more: no
  * empty node, no description. Written for a photo that simply has no text as much as for a
  * file that cannot be read at all.
  */
-const markIndexed = async (cmd: Command, inputPath: string, indexedAt: string): Promise<void> => {
+const markIndexed = async (cmd: Command, inputPath: string, indexedAt: string, unstored?: string): Promise<void> => {
   await cmd.execute(`attrs ${shq(inputPath)} -s textIndexedAt=${indexedAt}`);
+  await settleTextVectors(cmd, inputPath, unstored ? null : undefined);
 };
 
 const indexDocument = async (cmd: Command): CmdReturn => {
@@ -125,7 +128,7 @@ const indexDocument = async (cmd: Command): CmdReturn => {
   await phase('stored text and embedding');
   if (verbose) await cmd.writeLn('Stored extracted text');
 
-  await markIndexed(cmd, inputPath, indexedAt);
+  await markIndexed(cmd, inputPath, indexedAt, unstored);
   if (output.pages > 0) {
     await cmd.execute(`attrs ${shq(inputPath)} -J pages=${output.pages}`);
   }

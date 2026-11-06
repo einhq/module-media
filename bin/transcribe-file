@@ -13,19 +13,25 @@
  * its own seek target. `search-media` resolves a hit to a path and nothing else, and reading an
  * attr per hit would put a node read back on the search path.
  *
- * `transcribedAt` is written once the cues are, and marks the transcript done: the skip below,
- * the scan's gaps and `media.transcript.generated` all read it.
+ * `transcribedAt` is written once the cues are, and marks the transcript done: the skip below
+ * and `media.transcript.generated` read it. The file is marked last (`transcriptWith`,
+ * `@media/text-markers`), which is what `text-scan` asks of every file, and its text vectors are
+ * settled (`textVectorsBy`).
  *
- * A transcript a person wrote or corrected (`editedAt`, `file-set-transcript`) is never
- * transcribed again, not even with `-f`.
+ * A finished transcript is kept when it was made with the decode settings EMS runs now, when EMS
+ * cannot say what those are, or when `CFG_MEDIA_TRANSCRIPTS_CURRENT` is `off`; one made with other
+ * settings is transcribed again. A transcript a person wrote or corrected (`editedAt`,
+ * `file-set-transcript`), or of a file with no sound, is kept whatever the settings, and one a
+ * person wrote is never transcribed again, not even with `-f`.
  */
 
 import { resolve } from '@std/path';
 import { toText } from '@std/streams/to-text';
 import { type CmdReturn, collectUnknownFlags, type Command, parseArgs, reportUnknownFlags, shq } from '@ein/client';
-import { stepExitCode, transcribe, type TranscribeResult } from '@ems/client';
+import { generations, stepExitCode, transcribe, type TranscribeResult } from '@ems/client';
 import { CHUNK_TARGET_SECONDS, chunkSegments, chunkVectors, parseVtt, segmentsToVtt, transcriptText } from '@media/transcript';
 import { storeCurrentChunks } from '@ems/text-embedding';
+import { settleTextVectors, TRANSCRIPT_KEPT, TRANSCRIPT_WITH_ATTR } from '@media/text-markers';
 import { reportUnwritable } from '@media/writable';
 
 /**
@@ -41,6 +47,8 @@ const runWhisper = async (cmd: Command, inputPath: string, _mimetype: string): P
   const result = await transcribe(cmd, inputPath);
   return result.audio ? result : undefined;
 };
+
+const attrsOf = (node: { attrs: unknown }): Record<string, unknown> => node.attrs as Record<string, unknown>;
 
 /** Create a node if it is not there. `mknode` fails on an existing one, which -f must survive. */
 const ensureNode = async (cmd: Command, path: string, spec: string): Promise<boolean> => {
@@ -139,11 +147,29 @@ const transcribeFile = async (cmd: Command): CmdReturn => {
 
   // Checked before the demux: for a video this saves an ffmpeg pass and a whisper run, and
   // in a sweep most files have been here before. A node without `transcribedAt` is one an
-  // interrupted run left, and is transcribed again. A skip answers with the transcript it found.
+  // interrupted run left, and is transcribed again. A kept transcript marks the file with what it
+  // was made with, and the answer is the transcript it found.
   const transcriptAttrs = (await cmd.sys.vfs.get(cmd.access, transcriptPath).catch(() => undefined))?.attrs as Record<string, unknown> | undefined;
   const edited = typeof transcriptAttrs?.editedAt === 'string';
-  if (edited || (!force && typeof transcriptAttrs?.transcribedAt === 'string')) {
-    if (verbose) await cmd.writeLn(edited ? 'Transcript written by hand, skipping' : 'Already transcribed, skipping (use -f to force)');
+  const madeWith = typeof transcriptAttrs?.transcribedWith === 'string' && transcriptAttrs.transcribedWith ? transcriptAttrs.transcribedWith : undefined;
+  let keep = edited ? 'Transcript written by hand' : undefined;
+  if (!keep && !force && typeof transcriptAttrs?.transcribedAt === 'string') {
+    // Of a file with no sound: whisper never ran, and would not now.
+    if (typeof transcriptAttrs.transcribedBy !== 'string' || !madeWith) keep = 'No sound to transcribe';
+    else if (cmd.env.CFG_MEDIA_TRANSCRIPTS_CURRENT === 'off') keep = 'Already transcribed, and transcripts are not kept current';
+    else {
+      const now = (await generations(cmd))?.transcribe ?? undefined;
+      if (now === undefined) keep = 'Already transcribed, and EMS cannot say with what settings it transcribes now';
+      else if (now === madeWith) keep = 'Already transcribed with the settings EMS runs now';
+      else if (verbose) await cmd.writeLn('Transcribed with other settings than EMS runs now: transcribing again');
+    }
+  }
+  if (keep && transcriptAttrs) {
+    if (verbose) await cmd.writeLn(`${keep}, kept${edited ? '' : ' (use -f to transcribe again)'}`);
+    const marker = edited || !madeWith || typeof transcriptAttrs.transcribedBy !== 'string' ? TRANSCRIPT_KEPT : madeWith;
+    if (attrsOf(await cmd.sys.vfs.get(cmd.access, inputPath))[TRANSCRIPT_WITH_ATTR] !== marker) {
+      await cmd.sys.vfs.update(cmd.access, inputPath, { attrs: { [TRANSCRIPT_WITH_ATTR]: marker } });
+    }
     const existing = await readExisting(cmd, transcriptPath, transcriptAttrs);
     if (cmd.json) await cmd.writeJSON({ ...existing, path: inputPath, skipped: true });
     else await cmd.writeLn(existing.text || 'No speech detected');
@@ -178,12 +204,11 @@ const transcribeFile = async (cmd: Command): CmdReturn => {
       mimetype: 'text/vtt',
       transcribedAt,
       transcribedBy: result?.model ?? null,
-      // The decode settings behind this transcript. `media-scan` compares it with what EMS
-      // would write now, and transcribes the file again when they differ — which is how a
-      // tuning change reaches transcripts that already exist. Null when whisper never
-      // ran (no audio track), as `transcribedBy` is: there is nothing to redo, and deriveGaps
-      // only compares a transcript that names a model, so such a file is not re-announced on
-      // every scan.
+      // The decode settings behind this transcript, which the file's marker repeats: a run
+      // compares it with what EMS would write now, and transcribes the file again when they
+      // differ — which is how a tuning change reaches transcripts that already exist. Null when
+      // whisper never ran (no audio track), as `transcribedBy` is: there is nothing to redo, and
+      // the file is marked `kept`.
       transcribedWith: result?.signature ?? null,
       language: result?.language ?? null,
       languageProbability: result?.languageProbability ?? null,
@@ -200,6 +225,10 @@ const transcribeFile = async (cmd: Command): CmdReturn => {
   const unstored = await storeCurrentChunks(cmd, transcriptPath, chunkVectors(chunks), { transcribedAt, chunkSeconds: CHUNK_TARGET_SECONDS });
   if (unstored) await cmd.writeError(`transcribe-file: ${inputPath}: chunks not embedded: ${unstored}\n`);
   const chunkCount = unstored ? 0 : chunks.length;
+
+  // Last, so a run interrupted before here leaves the file to the next scan.
+  await settleTextVectors(cmd, inputPath, unstored ? null : undefined);
+  await cmd.sys.vfs.update(cmd.access, inputPath, { attrs: { [TRANSCRIPT_WITH_ATTR]: result?.model && result.signature ? result.signature : TRANSCRIPT_KEPT } });
 
   if (verbose) {
     await cmd.writeLn(`${inputPath}: ${segments.length} segments, ${chunkCount} chunks, language ${result?.language ?? 'none'}`);
@@ -232,12 +261,12 @@ transcribeFile.spec = {
   ],
   flags: [
     { name: 'v', type: 'bool' as const, description: 'Verbose output' },
-    { name: 'f', type: 'bool' as const, description: 'Force re-transcription even if a transcript exists, unless it was written by hand' },
+    { name: 'f', type: 'bool' as const, description: 'Transcribe again even a transcript made with the settings EMS runs now, unless it was written by hand' },
   ],
   examples: [
     'transcribe-file /archive/albums/Exempelalbum_2019/files/MVI_0042.MOV',
   ],
-  returns: 'nothing; a timed WebVTT transcript with chunk embeddings is written under the file.',
+  returns: 'the transcript written, or the one kept; a timed WebVTT transcript with chunk embeddings is written under the file.',
 };
 
 export default transcribeFile;

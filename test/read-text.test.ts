@@ -1,7 +1,7 @@
 /**
  * `read-text` against a stub EMS: a picture's text lands as its extracted text with its lines, its
  * language and a vector that carries its words, the file is stamped with the engine and the time,
- * a language set by hand is the one EMS is asked to read in, a reading that finds no text removes
+ * the file marked as having its texts embedded, a language set by hand is the one EMS is asked to read in, a reading that finds no text removes
  * an old one, and a picture EMS cannot read is marked read by the engine EMS runs, so it is not
  * announced again.
  */
@@ -77,6 +77,8 @@ Deno.test({
 
       const attrs = (await vfs.get(ADMIN_ACCESS, photo)).attrs;
       assertEquals([attrs.ocrBy, attrs.wordCount, typeof attrs.textIndexedAt], [PPOCR, 4, 'string']);
+      // Its text has a vector from the embedder EMS runs, which the file says.
+      assertEquals(attrs.textVectorsBy, BGE);
     });
 
     await t.step('a read picture is skipped without -f', async () => {

@@ -65,6 +65,24 @@ export type PicturesScanAnswer = {
   paths?: string[];
 };
 
+/** `text-scan`'s answer. */
+export type TextScanAnswer = {
+  /** Files the queries returned and the scan looked at. */
+  examined: number;
+  /** Facts written (or, with `-n`, that would be). */
+  announced: number;
+  /** True when `--limit` stopped the run before the queries were done. */
+  limited: boolean;
+  /** How many of each fact it announced, by the facts it scanned for. */
+  facts: Record<string, number>;
+  /** The facts held back under `--if-idle`, as their pipelines have work waiting. */
+  waiting: string[];
+  /** The facts announced for no file, as EMS did not say what it runs now. */
+  unchecked: string[];
+  /** The files announced, by fact, with `-v`. */
+  paths?: Record<string, string[]>;
+};
+
 /** What `exif-extract` says of a file: what it read, or that a module holds the file unread. */
 export type ExifExtractAnswer =
   | { indexedAt: string; width?: number; height?: number; sar?: number; angle?: number; undecodable?: string }

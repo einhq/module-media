@@ -10,12 +10,15 @@
  * absent EMS: a transcript it could not embed is still saved, said so on stderr, and
  * `media-reembed` embeds it later.
  *
- * The node is stamped `editedAt`, which `transcribe-file` leaves alone, even with `-f`, and which
- * `media-scan` never calls stale. `transcribedBy` stays: it says where the first draft came from.
+ * The node is stamped `editedAt`, which `transcribe-file` leaves alone, even with `-f`, and the file
+ * is marked `transcriptWith: kept` (`@media/text-markers`), which `text-scan` never calls stale.
+ * `transcribedBy` stays: it says where the first draft came from. The file's text vectors are
+ * settled last (`textVectorsBy`).
  */
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags, shq } from '@ein/client';
 import { storeCurrentChunks } from '@ems/text-embedding';
+import { settleTextVectors, TRANSCRIPT_KEPT, TRANSCRIPT_WITH_ATTR } from '@media/text-markers';
 import { CHUNK_TARGET_SECONDS, chunkSegments, chunkVectors, parseVtt, segmentsToVtt, type TranscriptSegment } from '@media/transcript';
 import { reportUnwritable } from '@media/writable';
 import { decodeBase64 } from '@std/encoding/base64';
@@ -125,6 +128,9 @@ const fileSetTranscript = async (cmd: Command): CmdReturn => {
     unembedded = await storeCurrentChunks(cmd, transcriptPath, chunkVectors(chunkSegments(segments)), { transcribedAt, chunkSeconds: CHUNK_TARGET_SECONDS }, {
       interactive: true,
     });
+    // Not embedded is stale: settled without asking an EMS that may be away.
+    await settleTextVectors(cmd, path, unembedded ? null : undefined);
+    await cmd.sys.vfs.update(cmd.access, path, { attrs: { [TRANSCRIPT_WITH_ATTR]: TRANSCRIPT_KEPT } });
   } catch (error) {
     await cmd.writeError(`file-set-transcript: ${path}: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

@@ -26,6 +26,7 @@
     "@media/staged-output": "./lib/staged-output.ts",
     "@media/stale-scan": "./lib/stale-scan.ts",
     "@media/storyboard": "./lib/storyboard.ts",
+    "@media/text-markers": "./lib/text-markers.ts",
     "@media/transcode": "./lib/transcode.ts",
     "@media/transcript": "./lib/transcript.ts",
     "@media/video-codec": "./lib/video-codec.ts",

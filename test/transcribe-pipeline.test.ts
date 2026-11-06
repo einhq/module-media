@@ -1,6 +1,6 @@
 /**
  * A first transcript and a stale one's redo are two trigger modes of one pipeline, for audio and
- * video alike.
+ * video alike; neither forces, as `transcribe-file` decides what a stale fact asks.
  */
 
 import { assertEquals } from '@std/assert';
@@ -25,7 +25,7 @@ type PipelineFile = {
 
 const read = async (name: string): Promise<PipelineFile> => parseYaml(await Deno.readTextFile(new URL(name, pipelinesDir))) as PipelineFile;
 
-Deno.test('media-transcribe carries ordinary triggers per media type and one forced trigger', async () => {
+Deno.test('media-transcribe carries ordinary triggers per media type and one stale trigger', async () => {
   const def = await read('media-transcribe.yaml');
   const ordinary = def.triggers.filter((trigger) => trigger.on === 'media.metadata.extracted');
   const stale = def.triggers.filter((trigger) => trigger.on === 'media.transcript.stale');
@@ -37,7 +37,7 @@ Deno.test('media-transcribe carries ordinary triggers per media type and one for
   }
   assertEquals(stale.length, 1);
   assertEquals(stale[0].skipIfExists, undefined);
-  assertEquals(stale[0].vars, { FORCE: '-f' });
+  assertEquals(stale[0].vars, undefined);
   assertEquals(stale[0].priority, 10);
   assertEquals(def.options.priority, 50);
   assertEquals(def.steps['transcribe-file'].command, 'transcribe-file $FORCE $NODE_PATH');

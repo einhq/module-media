@@ -2,7 +2,8 @@
 /**
  * media-bridge — turns VFS mutations into the facts of a media file itself (`@media/file-rules`):
  * it arrived, its bytes changed, it was turned or removed, its metadata was read, its renditions
- * were made. The facts go to /dev/events, for the pipeline engine to trigger on.
+ * were made, its text and its transcript; and the unread files a directory moved whole carried. The
+ * facts go to /dev/events, for the pipeline engine to trigger on.
  *
  * The bridge is the only emitter of those facts. Steps stay dumb: they write to the VFS and the fact
  * follows from what they wrote, so the event stream can never disagree with what is on disk.
@@ -11,12 +12,38 @@
  */
 
 import { QUEUES_PATH } from '@ein/paths';
-import type { CmdReturn, Command } from '@ein/client';
+import type { CmdReturn, Command, NodeQueryCursor } from '@ein/client';
+import { NodeNotFoundError } from '@ein/client';
 import { nodeExists, readNode, runBridge } from '@media/bridge';
-import { deriveFileEvents, MEDIA_BRIDGE_ROUTING_KEYS } from '@media/file-rules';
+import { deriveFileEvents, type FileRuleContext, MEDIA_BRIDGE_ROUTING_KEYS, type NodeSnapshot } from '@media/file-rules';
+
+/** Rows per page of the subtree query behind `unreadFilesWithin`. */
+const WITHIN_PAGE = 500;
 
 const mediaBridge = async (cmd: Command): CmdReturn => {
-  const ctx = { getNode: (path: string) => readNode(cmd, path), exists: (path: string) => nodeExists(cmd, path) };
+  const ctx: FileRuleContext = {
+    getNode: (path) => readNode(cmd, path),
+    exists: (path) => nodeExists(cmd, path),
+    // An indexed subtree query, a page at a time by id, rather than a walk. A directory moved and
+    // then removed before its event is read carries nothing; the error would otherwise nack the
+    // event until it is dead-lettered.
+    unreadFilesWithin: async (path) => {
+      const files: { path: string; node: NodeSnapshot }[] = [];
+      let after: NodeQueryCursor | undefined;
+      for (;;) {
+        let rows;
+        try {
+          rows = await cmd.sys.vfs.query(cmd.access, { within: path, types: ['file'], where: [{ ref: 'textIndexedAt', op: 'missing' }], after, limit: WITHIN_PAGE });
+        } catch (error) {
+          if (error instanceof NodeNotFoundError) return files;
+          throw error;
+        }
+        for (const row of rows) files.push({ path: row.absPath, node: { id: row.id, type: row.node.type, attrs: row.node.attrs as Record<string, unknown> } });
+        if (rows.length < WITHIN_PAGE) return files;
+        after = { value: null, id: rows[rows.length - 1].id };
+      }
+    },
+  };
   return await runBridge(cmd, {
     name: 'media-bridge',
     queuePath: cmd.env.MEDIA_BRIDGE_QUEUE || `${QUEUES_PATH}/media-bridge`,
@@ -29,7 +56,8 @@ const mediaBridge = async (cmd: Command): CmdReturn => {
 mediaBridge.spec = {
   name: 'media-bridge',
   effect: 'write' as const,
-  description: 'Derive the facts of a media file itself from VFS mutations: arrived, changed, turned, removed, read, its renditions made (long-running)',
+  description:
+    'Derive the facts of a media file itself from VFS mutations: arrived, changed, turned, removed, read, its renditions made, its text and transcript, and the unread files a moved directory carried (long-running)',
   examples: ['media-bridge'],
   returns: 'nothing; it runs until stopped, turning VFS mutations into the facts of media files.',
 };

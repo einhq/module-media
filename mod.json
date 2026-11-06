@@ -1,7 +1,7 @@
 {
   "name": "media",
   "version": "0.1.7",
-  "description": "Renditions of pictures, videos and recordings, and what describes a file, for any module: reading a file's metadata, the renditions the rendition table names, picture vectors for search by what a picture shows, the text read from pictures and documents, transcripts, the vectors of a file's texts, the heals that keep renditions and picture vectors current, the facts of a media file, and the media pool's workers, which take the kinds of work the modules' drop-ins name",
+  "description": "Renditions of pictures, videos and recordings, and what describes a file, for any module: reading a file's metadata, the renditions the rendition table names, picture vectors for search by what a picture shows, the text read from pictures and documents, transcripts, the vectors of a file's texts, the heals that keep renditions, picture vectors, text, transcripts and text vectors current, the facts of a media file, and the media pool's workers, which take the kinds of work the modules' drop-ins name",
 
   "license": "MIT",
   "coreApi": "^0.12.4",
@@ -47,6 +47,7 @@
     "@media/stale-scan": "./lib/stale-scan.ts",
     "@media/staged-output": "./lib/staged-output.ts",
     "@media/storyboard": "./lib/storyboard.ts",
+    "@media/text-markers": "./lib/text-markers.ts",
     "@media/transcode": "./lib/transcode.ts",
     "@media/transcript": "./lib/transcript.ts",
     "@media/video-codec": "./lib/video-codec.ts",
@@ -149,6 +150,15 @@
         "restarts": [
           "models"
         ]
+      },
+      {
+        "key": "CFG_MEDIA_TRANSCRIPTS_CURRENT",
+        "scope": "system",
+        "type": "string",
+        "default": "",
+        "label": "Keep transcripts current",
+        "description": "Videos and recordings transcribed with other speech-recognition settings than the media service runs now are transcribed again in the background, behind new media. Set to \"off\" to leave existing transcripts alone. On a large library a change of settings means hours of background work.",
+        "group": "Processing"
       }
     ]
   }

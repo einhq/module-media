@@ -65,7 +65,7 @@ const picturesScan = async (cmd: Command): CmdReturn => {
   const marked = (attrs: Record<string, unknown>) => typeof attrs[PICTURE_VECTORS_BY_ATTR] === 'string' ? attrs[PICTURE_VECTORS_BY_ATTR] as string : '';
   const { examined, announced, limited } = await scanStale(
     cmd,
-    { source: 'pictures-scan', fact: PICTURE_FACTS.stale, family: 'picture-vectors', root, limit, dry, verbose },
+    { source: 'pictures-scan', fact: PICTURE_FACTS.stale, families: ['picture-vectors'], root, limit, dry, verbose },
     ['image/', 'video/'].map((prefix) => ({
       where: [{ ref: 'mimetype', op: 'prefix', value: prefix }, { ref: PICTURE_VECTORS_BY_ATTR, op: 'ne', value: model }],
       data: (attrs) => ({ pictureVectorsBy: marked(attrs), expected: model }),

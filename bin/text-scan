@@ -1,0 +1,198 @@
+#!ts
+/**
+ * text-scan — announce every file whose text, transcript or text vectors are missing or not what EMS
+ * makes now.
+ *
+ * Each gap is found by a marker on the file, by one query per kind rather than a walk, in every
+ * tree under the path (`/` unless one is given), and announced as the fact its pipeline takes:
+ *
+ * - `media.transcript.stale`: a video or a recording whose `transcriptWith` (`@media/text-markers`)
+ *   is missing, or names other decode settings than EMS runs now and is not `kept`.
+ *   `media-transcribe` runs `transcribe-file`, which keeps a transcript made with the settings in
+ *   force, marking the file, and transcribes the rest. `CFG_MEDIA_TRANSCRIPTS_CURRENT=off` leaves
+ *   the transcripts there are alone: only a file with no marker is announced, and kept as it is.
+ * - `media.ocr.stale`: a read picture whose `ocrBy` names another engine than EMS reads with now, or
+ *   none, and whose text a person did not write (`textManual`). `media-ocr` reads it again.
+ * - `media.text.missing`: a picture or a document whose text is read (`isTextIndexedMimetype`) and
+ *   never was (no `textIndexedAt`). `media-ocr` or `document-index` reads it.
+ * - `media.text-embedding.stale`: a file that may hold a text — read, a video or a recording, or
+ *   described by hand — whose `textVectorsBy` is missing or names another text embedder than EMS
+ *   runs now. `media-embed-text` runs `media-reembed`, which embeds what lacks a current vector
+ *   and marks the file. A file announced for its transcript or its reading waits for the next
+ *   scan: what those write is embedded as it is written.
+ *
+ * A picture's text and a document's are passed over where their pipelines do not read them
+ * (`isTextReadPath`: a dot folder, a node's `metadata/`); the rest is `@media/stale-scan`'s,
+ * and a folder that wants none of the fact's families (`processing`).
+ *
+ * A fact whose check needs what EMS runs now is announced for no file while EMS does not say, and
+ * named in `unchecked`. `--if-idle` holds back each fact whose pipeline has work waiting, named in
+ * `waiting`, which is how the `text-heal` service runs it; `--limit` caps the facts of one run, and 0
+ * lifts the cap.
+ */
+
+import type { AttrCondition, CmdReturn, Command } from '@ein/client';
+import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
+import { resolve } from '@std/path';
+import { generations } from '@ems/client';
+import { textEmbeddingType } from '@ems/text-embedding';
+import type { TextScanAnswer } from '@media/api';
+import { TEXT_FACTS } from '@media/facts';
+import { isTextReadPath, TEXT_DOCUMENT_MIMETYPES } from '@media/file-rules';
+import { scanStale, type StaleQuery } from '@media/stale-scan';
+import { TEXT_VECTORS_BY_ATTR, TRANSCRIPT_KEPT, TRANSCRIPT_WITH_ATTR } from '@media/text-markers';
+import { factsWaiting } from '@media/waiting';
+
+/** Facts one run announces at most, unless `--limit` says otherwise. */
+const DEFAULT_LIMIT = 1000;
+
+/** An attr's value as a fact's data carries it: the string, or empty. */
+const named = (attrs: Record<string, unknown>, name: string): string => typeof attrs[name] === 'string' ? attrs[name] as string : '';
+
+const textScan = async (cmd: Command): CmdReturn => {
+  const unknown: string[] = [];
+  const flags = parseArgs(cmd.args, {
+    string: ['limit'],
+    boolean: ['if-idle', 'dry-run', 'verbose'],
+    alias: { n: 'dry-run', v: 'verbose' },
+    unknown: collectUnknownFlags(unknown),
+  });
+
+  if (await reportUnknownFlags(cmd, unknown)) return 1;
+
+  const limitFlag = Number(flags.limit);
+  const limit = flags.limit === undefined || !Number.isFinite(limitFlag) || limitFlag < 0 ? DEFAULT_LIMIT : limitFlag;
+  const dry = Boolean(flags['dry-run']);
+  const verbose = Boolean(flags.verbose);
+  const root = flags._.length > 0 ? resolve(cmd.cwd, String(flags._[0])) : '/';
+
+  const busy = flags['if-idle'] ? await factsWaiting(cmd, 'text-scan') : new Map<string, boolean>();
+  /** Whether `fact`'s work waits, under `--if-idle`; everything does when the definitions are unreadable. */
+  const waits = (fact: string) => !busy || busy.get(fact) !== false;
+
+  const transcriptsOff = cmd.env.CFG_MEDIA_TRANSCRIPTS_CURRENT === 'off';
+  const now = await generations(cmd);
+  const transcribe = now?.transcribe ?? undefined;
+  const ocr = now?.ocr ?? undefined;
+  const textEmbed = now?.textEmbed && textEmbeddingType(now.textEmbed) ? now.textEmbed : undefined;
+
+  const prefix = (value: string): AttrCondition => ({ ref: 'mimetype', op: 'prefix', value });
+  const read: AttrCondition = { ref: 'textIndexedAt', op: 'exists' };
+  const unread: AttrCondition = { ref: 'textIndexedAt', op: 'missing' };
+
+  /** Each fact in the order it is scanned: its families, its queries, and undefined when unchecked. */
+  const scans: { fact: string; families: string[]; text?: boolean; queries?: StaleQuery[] }[] = [
+    {
+      fact: TEXT_FACTS.transcriptStale,
+      families: ['transcripts'],
+      queries: transcriptsOff || transcribe
+        ? ['audio/', 'video/'].map((kind) => ({
+          where: transcriptsOff
+            ? [prefix(kind), { ref: TRANSCRIPT_WITH_ATTR, op: 'missing' }]
+            : [prefix(kind), { ref: TRANSCRIPT_WITH_ATTR, op: 'ne', value: transcribe! }, { ref: TRANSCRIPT_WITH_ATTR, op: 'ne', value: TRANSCRIPT_KEPT }],
+          data: (attrs) => ({ transcriptWith: named(attrs, TRANSCRIPT_WITH_ATTR), ...(transcribe && !transcriptsOff ? { expected: transcribe } : {}) }),
+        }))
+        : undefined,
+    },
+    {
+      fact: TEXT_FACTS.ocrStale,
+      families: ['text'],
+      text: true,
+      queries: ocr
+        ? [{
+          where: [prefix('image/'), read, { ref: 'ocrBy', op: 'ne', value: ocr }],
+          data: (attrs) => attrs.textManual === true ? undefined : { ocrBy: named(attrs, 'ocrBy'), expected: ocr },
+        }]
+        : undefined,
+    },
+    {
+      fact: TEXT_FACTS.textMissing,
+      families: ['text'],
+      text: true,
+      queries: [
+        { where: [prefix('image/'), unread], data: () => ({}) },
+        { where: [{ ref: 'mimetype', op: 'in', value: TEXT_DOCUMENT_MIMETYPES }, unread], data: () => ({}) },
+      ],
+    },
+    {
+      fact: TEXT_FACTS.textEmbeddingStale,
+      families: ['text', 'transcripts'],
+      queries: textEmbed
+        ? [[read], [prefix('audio/')], [prefix('video/')], [{ ref: 'description', op: 'exists' } as AttrCondition]].map((where) => ({
+          where: [...where, { ref: TEXT_VECTORS_BY_ATTR, op: 'ne', value: textEmbed }],
+          data: (attrs) => ({ textVectorsBy: named(attrs, TEXT_VECTORS_BY_ATTR), expected: textEmbed }),
+        }))
+        : undefined,
+    },
+  ];
+
+  const answer: TextScanAnswer = { examined: 0, announced: 0, limited: false, facts: {}, waiting: [], unchecked: [] };
+  const paths: Record<string, string[]> = {};
+  /** Files announced for their transcript or their reading, whose vectors wait for the next scan. */
+  const rewritten = new Set<string>();
+
+  for (const { fact, families, text, queries } of scans) {
+    if (flags['if-idle'] && waits(fact)) {
+      answer.waiting.push(fact);
+      continue;
+    }
+    if (!queries) {
+      answer.unchecked.push(fact);
+      continue;
+    }
+    if (limit > 0 && answer.announced >= limit) {
+      answer.limited = true;
+      break;
+    }
+    const result = await scanStale(cmd, {
+      source: 'text-scan',
+      fact,
+      families,
+      ...(text ? { admits: isTextReadPath } : {}),
+      ...(fact === TEXT_FACTS.textEmbeddingStale ? { skip: rewritten } : {}),
+      root,
+      limit: limit > 0 ? limit - answer.announced : 0,
+      dry,
+      verbose,
+    }, queries);
+    answer.examined += result.examined;
+    answer.announced += result.announced.length;
+    answer.facts[fact] = result.announced.length;
+    if (fact === TEXT_FACTS.transcriptStale || fact === TEXT_FACTS.ocrStale) { for (const path of result.announced) rewritten.add(path); }
+    paths[fact] = result.announced;
+    if (result.limited) {
+      answer.limited = true;
+      break;
+    }
+  }
+
+  if (cmd.json) await cmd.writeJSON({ ...answer, ...(verbose ? { paths } : {}) } satisfies TextScanAnswer);
+  else {
+    await cmd.writeLn(
+      `text-scan: ${answer.announced} of ${answer.examined} file(s) announced${dry ? ' (dry run)' : ''}${answer.limited ? `, stopped at --limit ${limit}` : ''}`,
+    );
+    for (const [fact, count] of Object.entries(answer.facts)) await cmd.writeLn(`  ${fact}: ${count}`);
+    if (answer.waiting.length > 0) await cmd.writeLn(`Held back while their work waits: ${answer.waiting.join(', ')}`);
+    if (answer.unchecked.length > 0) await cmd.writeLn(`Not checked, EMS could not say what it runs now: ${answer.unchecked.join(', ')}`);
+  }
+  return 0;
+};
+
+textScan.spec = {
+  name: 'text-scan',
+  effect: 'write' as const,
+  description: 'Announce every file whose text, transcript or text vectors are missing or not what EMS makes now, found by their markers',
+  args: [
+    { name: 'path', type: 'path' as const, optional: true, description: 'The tree to look in (default /)' },
+  ],
+  flags: [
+    { name: 'limit', type: 'number' as const, description: `Facts one run announces at most (default ${DEFAULT_LIMIT}; 0 for no cap)` },
+    { name: 'if-idle', type: 'bool' as const, description: 'Hold back each fact whose pipeline has work waiting' },
+    { name: 'n', dryRun: true, type: 'bool' as const, description: 'Dry run — count what would be announced without announcing it' },
+    { name: 'v', type: 'bool' as const, description: 'Name each file announced' },
+  ],
+  examples: ['text-scan -n', 'text-scan /archive/albums/christmas-2019', 'text-scan --if-idle --limit 0'],
+  returns: 'how many files it looked at and how many it announced, by fact, and the facts it held back or could not check.',
+};
+
+export default textScan;
