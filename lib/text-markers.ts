@@ -56,7 +56,7 @@ const currentEmbedder = async (cmd: Command): Promise<string | null> => {
  * transcript that heard no speech. A content vector made from the opening of a long text, which
  * `media-reembed` redoes in parts, is not asked about: telling it apart takes the text itself.
  */
-export const staleTexts = async (cmd: Command, file: string, attrs: Record<string, unknown>, generation: string): Promise<string[] | undefined> => {
+const staleTexts = async (cmd: Command, file: string, attrs: Record<string, unknown>, generation: string): Promise<string[] | undefined> => {
   const type = textEmbeddingType(generation);
   if (!type) return undefined;
 
