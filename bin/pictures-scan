@@ -1,0 +1,98 @@
+#!ts
+/**
+ * pictures-scan — announce every file whose picture vectors are not the model EMS embeds with now.
+ *
+ * `embed-picture` marks a file once its picture vectors are stored (`pictureVectorsBy`,
+ * `@media/pictures`), with the model that made them. This finds the photos and videos whose marker
+ * is missing or names another model than EMS runs now, by one query per kind rather than a walk, in
+ * every tree under the path (`/` unless one is given), and announces `media.picture.stale` for
+ * each, which `media-embed-picture` takes: vectors the model EMS runs made are kept and the file
+ * marked, another model's are made again. When EMS embeds with another model, the next scan reopens
+ * every file. What it passes over is `@media/stale-scan`'s, and a folder that does not want picture
+ * vectors (`processing`).
+ *
+ * Nothing is announced while EMS does not answer, or runs no picture embedder. `--if-idle`
+ * announces nothing while `media-embed-picture` has work waiting, which is how the `pictures-heal`
+ * service runs it; `--limit` caps the facts of one run, and 0 lifts the cap.
+ */
+
+import type { CmdReturn, Command } from '@ein/client';
+import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
+import { resolve } from '@std/path';
+import { generations } from '@ems/client';
+import type { PicturesScanAnswer } from '@media/api';
+import { PICTURE_FACTS } from '@media/facts';
+import { PICTURE_VECTORS_BY_ATTR } from '@media/pictures';
+import { scanStale } from '@media/stale-scan';
+import { allWait, factsWaiting } from '@media/waiting';
+
+/** Facts one run announces at most, unless `--limit` says otherwise. */
+const DEFAULT_LIMIT = 1000;
+
+const picturesScan = async (cmd: Command): CmdReturn => {
+  const unknown: string[] = [];
+  const flags = parseArgs(cmd.args, {
+    string: ['limit'],
+    boolean: ['if-idle', 'dry-run', 'verbose'],
+    alias: { n: 'dry-run', v: 'verbose' },
+    unknown: collectUnknownFlags(unknown),
+  });
+
+  if (await reportUnknownFlags(cmd, unknown)) return 1;
+
+  const limitFlag = Number(flags.limit);
+  const limit = flags.limit === undefined || !Number.isFinite(limitFlag) || limitFlag < 0 ? DEFAULT_LIMIT : limitFlag;
+  const dry = Boolean(flags['dry-run']);
+  const verbose = Boolean(flags.verbose);
+  const root = flags._.length > 0 ? resolve(cmd.cwd, String(flags._[0])) : '/';
+
+  const answer = async (result: PicturesScanAnswer, text: string): CmdReturn => {
+    if (cmd.json) await cmd.writeJSON(result satisfies PicturesScanAnswer);
+    else await cmd.writeLn(`pictures-scan: ${text}`);
+    return 0;
+  };
+  const nothing = { examined: 0, announced: 0, limited: false };
+
+  if (flags['if-idle'] && allWait(await factsWaiting(cmd, 'pictures-scan'), [PICTURE_FACTS.stale])) {
+    return await answer({ ...nothing, waiting: true, model: null }, 'picture work is waiting, nothing announced');
+  }
+
+  const now = await generations(cmd);
+  if (!now) return await answer({ ...nothing, waiting: false, model: null }, 'EMS is not answering, nothing announced');
+  const model = now.imageEmbed;
+  if (model === null) return await answer({ ...nothing, waiting: false, model }, 'EMS embeds no pictures, nothing announced');
+
+  const marked = (attrs: Record<string, unknown>) => typeof attrs[PICTURE_VECTORS_BY_ATTR] === 'string' ? attrs[PICTURE_VECTORS_BY_ATTR] as string : '';
+  const { examined, announced, limited } = await scanStale(
+    cmd,
+    { source: 'pictures-scan', fact: PICTURE_FACTS.stale, family: 'picture-vectors', root, limit, dry, verbose },
+    ['image/', 'video/'].map((prefix) => ({
+      where: [{ ref: 'mimetype', op: 'prefix', value: prefix }, { ref: PICTURE_VECTORS_BY_ATTR, op: 'ne', value: model }],
+      data: (attrs) => ({ pictureVectorsBy: marked(attrs), expected: model }),
+    })),
+  );
+
+  return await answer(
+    { examined, announced: announced.length, waiting: false, limited, model, ...(verbose ? { paths: announced } : {}) },
+    `${announced.length} of ${examined} file(s) announced${dry ? ' (dry run)' : ''}${limited ? `, stopped at --limit ${limit}` : ''}`,
+  );
+};
+
+picturesScan.spec = {
+  name: 'pictures-scan',
+  effect: 'write' as const,
+  description: 'Announce every photo and video whose picture vectors are not the model EMS embeds with now: its marker is missing or names another model',
+  args: [
+    { name: 'path', type: 'path' as const, optional: true, description: 'The tree to look in (default /)' },
+  ],
+  flags: [
+    { name: 'limit', type: 'number' as const, description: `Facts one run announces at most (default ${DEFAULT_LIMIT}; 0 for no cap)` },
+    { name: 'if-idle', type: 'bool' as const, description: 'Announce nothing while media-embed-picture has work waiting' },
+    { name: 'n', dryRun: true, type: 'bool' as const, description: 'Dry run — count what would be announced without announcing it' },
+    { name: 'v', type: 'bool' as const, description: 'Name each file announced' },
+  ],
+  examples: ['pictures-scan -n', 'pictures-scan /archive/albums/christmas-2019', 'pictures-scan --if-idle --limit 0'],
+  returns: 'how many files it looked at and how many it announced as media.picture.stale, and the model EMS embeds with.',
+};
+
+export default picturesScan;

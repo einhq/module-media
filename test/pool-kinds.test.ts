@@ -34,7 +34,7 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
     await t.step("the media module's own drop-ins name its kinds", async () => {
       assertEquals(await client.execJson<PoolKinds>('media-pool-kinds cpu'), { kinds: ['ingest', 'stills', 'transcode'], reserve: ['stills', 'transcode'] });
       const text = await client.exec('media-pool-kinds models', { json: false });
-      assertEquals(String(text.data).trim(), '--kind shots');
+      assertEquals(String(text.data).trim(), '--kind shots --kind embed-picture');
     });
 
     await t.step('the modules in name order, comments left out, a kind named twice once', async () => {
@@ -48,12 +48,12 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
 
     await t.step('the flags split into words, as a start script uses them', async () => {
       const split = await client.exec('kinds=$(media-pool-kinds models); for word in $kinds; do echo "[$word]"; done', { json: false });
-      assertEquals(String(split.data).trim().split('\n'), ['[--kind]', '[shots]']);
+      assertEquals(String(split.data).trim().split('\n'), ['[--kind]', '[shots]', '[--kind]', '[embed-picture]']);
     });
 
     await t.step('the second models worker takes them the other way round', async () => {
-      await writeKinds('media-models', 'archive', 'faces\nembed-picture\nocr\n');
-      assertEquals((await client.execJson<PoolKinds>('media-pool-kinds models --reverse')).kinds, ['shots', 'ocr', 'embed-picture', 'faces']);
+      await writeKinds('media-models', 'archive', 'faces\nocr\n');
+      assertEquals((await client.execJson<PoolKinds>('media-pool-kinds models --reverse')).kinds, ['embed-picture', 'shots', 'ocr', 'faces']);
     });
 
     await t.step('anything but cpu or models is refused', async () => {

@@ -1,0 +1,5 @@
+{
+  "description": "Runs pictures-scan every hour, which announces every photo and video, in any tree, whose picture vectors are missing or were made by another model than EMS embeds with now, unless picture work is waiting",
+  "restartPolicy": "on-failure",
+  "workClass": "background"
+}

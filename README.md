@@ -23,6 +23,15 @@ the table they were made by, and the `renditions-heal` service runs `renditions-
 which announces the files whose mark is missing or names another table. `regenerate` makes them
 again under a folder. [architecture/renditions.md](architecture/renditions.md) says how.
 
+The picture vectors of every photo and video in a folder that wants them (`picture-vectors`), for
+search by what a picture shows: `embed-picture` in the pipeline `media-embed-picture`, a vector per
+photo and per keyframe of a video under `metadata/picture`, the file marked with the model that
+made them (`pictureVectorsBy`), and the `pictures-heal` service, which runs `pictures-scan` every
+hour to announce the files whose mark is missing or names another model than EMS runs now. Search
+reads them through `@media/pictures` (the embedding types, where a file keeps them, a query's words
+in their space) and `@media/picture-source` (what EMS reads a picture from).
+[architecture/pictures.md](architecture/pictures.md) says how.
+
 The libraries other modules build on: `@media/probe` (what EMS says of a file), `@media/orientation`
 (the display frame and the pixel shape), `@media/storyboard`, `@media/chapters`, `@media/vtt`,
 `@media/writable`, the marker (`@media/rendition-marker`), the facts (`@media/facts`), whether

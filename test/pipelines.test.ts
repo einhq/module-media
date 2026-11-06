@@ -1,7 +1,7 @@
 /**
- * The media module's pipelines: a rendition pipeline's triggers name the `renditions` family, so a
- * folder that wants none gets none, and skip a source nothing can decode; reading names none, since
- * every family needs it. Every kind a step queues under in the media pool is one the module's own
+ * The media module's pipelines: a rendition pipeline's triggers name the `renditions` family and
+ * the picture vectors' `picture-vectors`, so a folder that wants none gets none, and skip a source
+ * nothing can decode; reading names none, since every family needs it. Every kind a step queues under in the media pool is one the module's own
  * drop-ins name for the workers, or its jobs would wait forever, and a model-bound step takes one
  * slot.
  */
@@ -36,13 +36,17 @@ const dropInKinds = async (worker: string): Promise<string[]> =>
     .filter(Boolean);
 
 /** The family each pipeline's triggers name, and why the others name none. */
-const FAMILIES: Record<string, string> = { 'media-stills.yaml': 'renditions', 'media-transcode.yaml': 'renditions' };
+const FAMILIES: Record<string, string> = {
+  'media-embed-picture.yaml': 'picture-vectors',
+  'media-stills.yaml': 'renditions',
+  'media-transcode.yaml': 'renditions',
+};
 const UNGATED: Record<string, string> = {
   'media-ingest.yaml': 'reads the file, which every family needs',
   'media-reindex.yaml': 'reads the file again when its bytes change, which every family needs',
 };
 
-Deno.test('every trigger names its family, and a rendition pipeline skips a source nothing can decode', async () => {
+Deno.test('every trigger names its family, and a gated pipeline skips a source nothing can decode', async () => {
   const found = await pipelines();
   assertEquals(found.map(([name]) => name), [...Object.keys(FAMILIES), ...Object.keys(UNGATED)].sort());
   for (const [name, definition] of found) {

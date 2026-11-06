@@ -49,6 +49,22 @@ export type RenditionsScanAnswer = {
   paths?: string[];
 };
 
+/** `pictures-scan`'s answer. */
+export type PicturesScanAnswer = {
+  /** Files the queries returned and the scan looked at. */
+  examined: number;
+  /** `media.picture.stale` facts written (or, with `-n`, that would be). */
+  announced: number;
+  /** True when `media-embed-picture` had work waiting under `--if-idle`, and nothing was announced. */
+  waiting: boolean;
+  /** True when `--limit` stopped the run before the queries were done. */
+  limited: boolean;
+  /** The model EMS embeds pictures with now; null when EMS embeds none, or did not answer. */
+  model: string | null;
+  /** The files announced, with `-v`. */
+  paths?: string[];
+};
+
 /** What `exif-extract` says of a file: what it read, or that a module holds the file unread. */
 export type ExifExtractAnswer =
   | { indexedAt: string; width?: number; height?: number; sar?: number; angle?: number; undecodable?: string }

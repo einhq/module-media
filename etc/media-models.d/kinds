@@ -2,3 +2,4 @@
 # worker rotates between with the other modules'. Every kind a pipeline step names with
 # `requires: models` is here, or it never runs (test/pipelines.test.ts).
 shots                    # a video's cuts, its chapters
+embed-picture            # picture vectors, for search by what a picture shows

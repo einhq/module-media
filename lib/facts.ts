@@ -15,3 +15,12 @@ export const RENDITION_FACTS = {
    */
   stale: 'media.renditions.stale',
 } as const;
+
+/** The fact of a file's picture vectors, which `pictures-scan` announces and `media-embed-picture` takes. */
+export const PICTURE_FACTS = {
+  /**
+   * A file's picture vectors are missing or were made by another model than EMS embeds with now:
+   * its marker (`pictureVectorsBy`, `@media/pictures`) is missing or names another.
+   */
+  stale: 'media.picture.stale',
+} as const;
