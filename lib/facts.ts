@@ -25,6 +25,12 @@ export const PICTURE_FACTS = {
   stale: 'media.picture.stale',
 } as const;
 
+/** The fact of a file's fingerprints, which `fingerprints-scan` announces and `media-fingerprint` takes. */
+export const FINGERPRINT_FACTS = {
+  /** A picture, video or recording was never fingerprinted to the end: no `fingerprintedAt` (`@media/fingerprints`). */
+  stale: 'media.fingerprints.stale',
+} as const;
+
 /**
  * The facts of a file's text: what is read from a picture or a document, a recording's transcript,
  * and their vectors. The media bridge derives the first two from the writes that reveal them

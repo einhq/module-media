@@ -32,7 +32,10 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
 
   try {
     await t.step("the media module's own drop-ins name its kinds", async () => {
-      assertEquals(await client.execJson<PoolKinds>('media-pool-kinds cpu'), { kinds: ['ingest', 'stills', 'transcode'], reserve: ['stills', 'transcode'] });
+      assertEquals(await client.execJson<PoolKinds>('media-pool-kinds cpu'), {
+        kinds: ['ingest', 'stills', 'transcode', 'fingerprint'],
+        reserve: ['stills', 'transcode', 'fingerprint'],
+      });
       const text = await client.exec('media-pool-kinds models', { json: false });
       assertEquals(String(text.data).trim(), '--kind shots --kind embed-picture --kind ocr --kind embed-text --kind transcribe');
     });
@@ -41,8 +44,8 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
       await writeKinds('media-worker', 'zeta', "# zeta's work\ningest\nstills reserve   # pictures\ndedupe\n");
       await writeKinds('media-worker', 'alpha', 'unzip\n\ningest\n');
       assertEquals(await client.execJson<PoolKinds>('media-pool-kinds cpu'), {
-        kinds: ['unzip', 'ingest', 'stills', 'transcode', 'dedupe'],
-        reserve: ['stills', 'transcode'],
+        kinds: ['unzip', 'ingest', 'stills', 'transcode', 'fingerprint', 'dedupe'],
+        reserve: ['stills', 'transcode', 'fingerprint'],
       });
     });
 

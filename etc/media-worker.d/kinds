@@ -5,3 +5,4 @@
 ingest                   # a file's metadata (EMS reads it) and its hash       (priority 100)
 stills reserve           # pictures of every media file, a video's storyboard  (priority 60)
 transcode reserve        # a video's or recording's web rendition, two slots   (priority 10)
+fingerprint reserve      # the prints that find copies                         (priority 30)

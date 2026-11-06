@@ -1,7 +1,7 @@
 /**
- * The walk behind the scans that heal by a marker (`renditions-scan`, `pictures-scan`, `text-scan`):
- * the files a query finds whose marker is missing or names something no longer in force, each
- * announced in the bulk lane, as nobody waits on a repair.
+ * The walk behind the scans that heal by a marker (`renditions-scan`, `pictures-scan`,
+ * `fingerprints-scan`, `text-scan`): the files a query finds whose marker is missing or names
+ * something no longer in force, each announced in the bulk lane, as nobody waits on a repair.
  *
  * Passed over: a rendition itself (it carries `sourceId`), a file nothing can decode, one with no
  * bytes, a picture, video or recording whose metadata is not read yet (that is discovery's gap,

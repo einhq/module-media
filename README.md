@@ -32,6 +32,15 @@ reads them through `@media/pictures` (the embedding types, where a file keeps th
 in their space) and `@media/picture-source` (what EMS reads a picture from).
 [architecture/pictures.md](architecture/pictures.md) says how.
 
+The fingerprints that find a file's copies, of every picture, video and recording in a folder that
+wants them (`fingerprints`): `compute-fingerprint` in the pipeline `media-fingerprint`, an SSCD
+descriptor per picture and per keyframe of a video and a chromaprint per recording under
+`metadata/`, the file marked once they are all there (`fingerprintedAt`), and the
+`fingerprints-heal` service, which runs `fingerprints-scan` every hour to announce the files
+without the mark. Readers find where a file keeps them in `@media/fingerprints` and compare
+recordings with `@media/chromaprint`. [architecture/fingerprints.md](architecture/fingerprints.md)
+says how.
+
 The text of every file in a folder that wants it (`text`, `transcripts`): a picture's read by
 `read-text` in `media-ocr`, a document's by `index-document` in `document-index`, a video's or a
 recording's transcript by `transcribe-file` in `media-transcribe` (WebVTT, `@media/transcript`),

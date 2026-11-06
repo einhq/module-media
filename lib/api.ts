@@ -83,6 +83,20 @@ export type TextScanAnswer = {
   paths?: Record<string, string[]>;
 };
 
+/** `fingerprints-scan`'s answer. */
+export type FingerprintsScanAnswer = {
+  /** Files the queries returned and the scan looked at. */
+  examined: number;
+  /** `media.fingerprints.stale` facts written (or, with `-n`, that would be). */
+  announced: number;
+  /** True when `media-fingerprint` had work waiting under `--if-idle`, and nothing was announced. */
+  waiting: boolean;
+  /** True when `--limit` stopped the run before the queries were done. */
+  limited: boolean;
+  /** The files announced, with `-v`. */
+  paths?: string[];
+};
+
 /** What `exif-extract` says of a file: what it read, or that a module holds the file unread. */
 export type ExifExtractAnswer =
   | { indexedAt: string; width?: number; height?: number; sar?: number; angle?: number; undecodable?: string }

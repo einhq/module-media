@@ -1,0 +1,88 @@
+#!ts
+/**
+ * fingerprints-scan — announce every picture, video and recording never fingerprinted to the end.
+ *
+ * `compute-fingerprint` marks a file once its prints are written (`fingerprintedAt`,
+ * `@media/fingerprints`), and a recording too short for a print too. This finds the files without
+ * the marker, by one query per kind rather than a walk, in every tree under the path (`/` unless
+ * one is given), and announces `media.fingerprints.stale` for each, which `media-fingerprint`
+ * takes: a file whose prints are all there is only marked, the others are fingerprinted. What it
+ * passes over is `@media/stale-scan`'s, and a folder that does not want fingerprints
+ * (`processing`).
+ *
+ * `--if-idle` announces nothing while `media-fingerprint` has work waiting, which is how the
+ * `fingerprints-heal` service runs it; `--limit` caps the facts of one run, and 0 lifts the cap.
+ */
+
+import type { CmdReturn, Command } from '@ein/client';
+import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
+import { resolve } from '@std/path';
+import type { FingerprintsScanAnswer } from '@media/api';
+import { FINGERPRINT_FACTS } from '@media/facts';
+import { FINGERPRINTED_AT_ATTR } from '@media/fingerprints';
+import { scanStale } from '@media/stale-scan';
+import { allWait, factsWaiting } from '@media/waiting';
+
+/** Facts one run announces at most, unless `--limit` says otherwise. */
+const DEFAULT_LIMIT = 1000;
+
+const fingerprintsScan = async (cmd: Command): CmdReturn => {
+  const unknown: string[] = [];
+  const flags = parseArgs(cmd.args, {
+    string: ['limit'],
+    boolean: ['if-idle', 'dry-run', 'verbose'],
+    alias: { n: 'dry-run', v: 'verbose' },
+    unknown: collectUnknownFlags(unknown),
+  });
+
+  if (await reportUnknownFlags(cmd, unknown)) return 1;
+
+  const limitFlag = Number(flags.limit);
+  const limit = flags.limit === undefined || !Number.isFinite(limitFlag) || limitFlag < 0 ? DEFAULT_LIMIT : limitFlag;
+  const dry = Boolean(flags['dry-run']);
+  const verbose = Boolean(flags.verbose);
+  const root = flags._.length > 0 ? resolve(cmd.cwd, String(flags._[0])) : '/';
+
+  const answer = async (result: FingerprintsScanAnswer, text: string): CmdReturn => {
+    if (cmd.json) await cmd.writeJSON(result satisfies FingerprintsScanAnswer);
+    else await cmd.writeLn(`fingerprints-scan: ${text}`);
+    return 0;
+  };
+
+  if (flags['if-idle'] && allWait(await factsWaiting(cmd, 'fingerprints-scan'), [FINGERPRINT_FACTS.stale])) {
+    return await answer({ examined: 0, announced: 0, limited: false, waiting: true }, 'fingerprint work is waiting, nothing announced');
+  }
+
+  const { examined, announced, limited } = await scanStale(
+    cmd,
+    { source: 'fingerprints-scan', fact: FINGERPRINT_FACTS.stale, families: ['fingerprints'], root, limit, dry, verbose },
+    ['image/', 'video/', 'audio/'].map((prefix) => ({
+      where: [{ ref: 'mimetype', op: 'prefix', value: prefix }, { ref: FINGERPRINTED_AT_ATTR, op: 'missing' }],
+      data: () => ({}),
+    })),
+  );
+
+  return await answer(
+    { examined, announced: announced.length, waiting: false, limited, ...(verbose ? { paths: announced } : {}) },
+    `${announced.length} of ${examined} file(s) announced${dry ? ' (dry run)' : ''}${limited ? `, stopped at --limit ${limit}` : ''}`,
+  );
+};
+
+fingerprintsScan.spec = {
+  name: 'fingerprints-scan',
+  effect: 'write' as const,
+  description: 'Announce every picture, video and recording that was never fingerprinted to the end: it has no fingerprintedAt',
+  args: [
+    { name: 'path', type: 'path' as const, optional: true, description: 'The tree to look in (default /)' },
+  ],
+  flags: [
+    { name: 'limit', type: 'number' as const, description: `Facts one run announces at most (default ${DEFAULT_LIMIT}; 0 for no cap)` },
+    { name: 'if-idle', type: 'bool' as const, description: 'Announce nothing while media-fingerprint has work waiting' },
+    { name: 'n', dryRun: true, type: 'bool' as const, description: 'Dry run — count what would be announced without announcing it' },
+    { name: 'v', type: 'bool' as const, description: 'Name each file announced' },
+  ],
+  examples: ['fingerprints-scan -n', 'fingerprints-scan /archive/albums/christmas-2019', 'fingerprints-scan --if-idle --limit 0'],
+  returns: 'how many files it looked at and how many it announced as media.fingerprints.stale.',
+};
+
+export default fingerprintsScan;

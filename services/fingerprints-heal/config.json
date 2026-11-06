@@ -1,0 +1,5 @@
+{
+  "description": "Runs fingerprints-scan every hour, which announces every picture, video and recording, in any tree, that was never fingerprinted to the end, unless fingerprint work is waiting",
+  "restartPolicy": "on-failure",
+  "workClass": "background"
+}
