@@ -10,8 +10,11 @@
 #
 #   - these calls are slow (a recording's transcription about a minute on the card, its voices
 #     half that) and must not fill the engine's inline lane during a crawl;
-#   - EMS's queue is FIFO and bounded, and answers `busy` past its depth, so EiN has to bound what
-#     it sends and choose which of its backlogs gets to queue there.
+#   - EMS chooses only among what it is sent, and answers `busy` past its depth, so EiN has to
+#     bound what it sends and choose which of its backlogs gets to queue there. Keeping to one
+#     kind is what keeps a model loaded and working: only this pool holds a kind's whole backlog.
+#     Offering every kind at once instead, twelve in flight, took half as long again on fry, as
+#     EMS then switched models every few requests (ein/core#1068).
 #
 # CFG_MODEL_SLOTS is that bound. Size it against EMS_LIMIT_MODELS on the EMS side: more slots than
 # EMS runs at once only moves the wait from this pool to EMS's queue, and past its depth into
