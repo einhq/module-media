@@ -118,7 +118,7 @@ the rendition for or has no route for, and the storyboard of a refused playback 
 accounted for. Stills and transcodes are separate pipelines, so whichever run completes the
 set writes it; a run with a failure marks nothing, and a run that finds everything in place
 writes nothing, so the write is news. The bridge announces it as `media.renditions.made`, on
-which the archive's `media-device-cover` offers a video's poster frame to its device. The gap is the other
+which the archive's `media-camera-cover` offers a video's poster frame to its camera. The gap is the other
 side of the same attr: `renditions-scan` asks, per kind, for the files of that mimetype whose
 `renditionsFor` is not the signature in force — an attr query over every tree, not a walk of
 the albums or a listing of `thumbnails/` — passes over a rendition, an undecodable file, an
