@@ -1,6 +1,6 @@
 # Admits the media pool's work that is not a model request, against one budget of `cpu` slots.
 #
-# The engine puts these steps in /pools/media instead of running them inline, so a crawl cannot
+# The engine puts these steps in /var/pools/media instead of running them inline, so a crawl cannot
 # start hundreds at once. The kinds are the modules': each names its own in a drop-in,
 # `/etc/media-worker.d/<module>/kinds`, which `media-pool-kinds cpu` reads. A kind no worker takes
 # never runs at all, since the pool has nobody to claim it, and the dashboard shows it as having

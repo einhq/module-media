@@ -1,5 +1,5 @@
-# Owns admission of the model-bound media steps. The engine puts them in /pools/media instead of
-# running them inline; this worker claims from it, and what it offers as `models` is how many
+# Owns admission of the model-bound media steps. The engine puts them in /var/pools/media instead
+# of running them inline; this worker claims from it, and what it offers as `models` is how many
 # model requests EiN keeps in flight against EMS at once.
 #
 # The card is EMS's: no GPU is passed to this container, and nothing here knows whether a request

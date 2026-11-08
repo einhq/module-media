@@ -3,8 +3,7 @@
  * exiftool — a file's metadata as exiftool reads it, through EMS.
  *
  * The values are exiftool's numeric ones (`-n`): EMS's probe extracts every tag that way, so
- * what is printed is what `exif-extract` indexes. `-n` is accepted for the callers written
- * against the old wrapper and changes nothing. JSON mode prints the one-element array
+ * what is printed is what `exif-extract` indexes. JSON mode prints the one-element array
  * `exiftool -n -j` writes; text mode prints `Tag: value` lines.
  */
 import { resolve } from '@std/path';
@@ -14,7 +13,7 @@ import { extractExif } from '@media/exif-service';
 
 const exiftool = async (cmd: Command): CmdReturn => {
   const unknown: string[] = [];
-  const flags = parseArgs(cmd.args, { boolean: ['n'], unknown: collectUnknownFlags(unknown) });
+  const flags = parseArgs(cmd.args, { unknown: collectUnknownFlags(unknown) });
   if (await reportUnknownFlags(cmd, unknown)) return 1;
 
   const filename = flags._.length > 0 ? resolve(cmd.cwd, String(flags._[0])) : '';
@@ -46,7 +45,7 @@ exiftool.spec = {
   effect: 'read' as const,
   description: 'Extract metadata from a file, as exiftool reads it (through the media service)',
   args: [{ name: 'filename', type: 'path' as const, description: 'VFS path to file' }],
-  flags: [{ name: 'n', type: 'bool' as const, description: 'Numeric values (always the case now; accepted for compatibility)' }],
+  flags: [],
   examples: [
     'exiftool /archive/albums/Exempelalbum_2019/files/IMG_0007.jpg',
   ],
