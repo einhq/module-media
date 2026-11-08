@@ -6,6 +6,7 @@
 
 import { assertEquals } from '@std/assert';
 import { ADMIN_ACCESS, createTestContext } from '@ein/testing';
+import { STEP_EXIT_TEMPORARY } from '@ein/client';
 import { STORYBOARD_ATTR } from '@media/storyboard';
 import { startStubEms, type StubAnswer } from '@ems/testing';
 
@@ -111,10 +112,10 @@ Deno.test({
       assertEquals(unreadable.success, true, `an unreadable rendition must not fail the step: ${unreadable.error}`);
     });
 
-    await t.step('an EMS without the op leaves the sheet for one that has it', async () => {
-      answer = () => Promise.resolve({ error: { code: 'http_404', message: 'Not Found' }, status: 404 });
-      const result = await client.exec(`${env} JSON_OUTPUT=1 generate-derivatives ${film} --only storyboard -f`);
-      assertEquals(result.success, true, `${result.error}`);
+    await t.step('an EMS without the op puts the step back for an instance that has it', async () => {
+      answer = () => Promise.resolve({ error: { code: 'op_not_served', message: 'video.storyboard is not served', permanent: true }, status: 404 });
+      const code = await client.execString(`${env} generate-derivatives ${film} --only storyboard -f; echo $?`);
+      assertEquals(code.trim().split('\n').at(-1), String(STEP_EXIT_TEMPORARY));
     });
 
     await t.step('a clip of a few seconds gets no storyboard', async () => {

@@ -5,6 +5,7 @@
 
 import { assertEquals, assertStringIncludes } from '@std/assert';
 import { ADMIN_ACCESS, createTestContext } from '@ein/testing';
+import { STEP_EXIT_TEMPORARY } from '@ein/client';
 import type { DetectChaptersAnswer } from '@media/api';
 import { startStubEms, type StubAnswer } from '@ems/testing';
 
@@ -104,7 +105,7 @@ Deno.test({
       assertEquals(node.attrs.detectedAt, undefined);
     });
 
-    await t.step('any other failure fails the step and writes nothing; an EMS without the op does not', async () => {
+    await t.step('any other failure fails the step and writes nothing; an EMS without the op puts it back for another', async () => {
       await client.exec(`rm ${tape}/metadata/chapters`);
       for (
         const [error, status] of [
@@ -117,8 +118,11 @@ Deno.test({
         assertEquals((await runTape()).success, false, error.code);
         assertEquals(await vfs.exists(ADMIN_ACCESS, `${tape}/metadata/chapters`), false, error.code);
       }
-      answer = () => Promise.resolve({ error: { code: 'http_404', message: 'Not Found' }, status: 404 });
-      assertEquals((await run('-f')).skipped, 'ems-lacks-op');
+      for (const code of ['op_not_served', 'http_404']) {
+        answer = () => Promise.resolve({ error: { code, message: 'not served', permanent: true }, status: 404 });
+        assertEquals((await client.execString(`${env} detect-chapters ${tape}; echo $?`)).trim().split('\n').at(-1), String(STEP_EXIT_TEMPORARY), code);
+        assertEquals(await vfs.exists(ADMIN_ACCESS, `${tape}/metadata/chapters`), false, code);
+      }
     });
 
     await t.step("a camera's take is held to a higher score and has no leader; a film is left to EMS's defaults", async () => {

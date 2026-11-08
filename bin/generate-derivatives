@@ -4,7 +4,7 @@ import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags, shq, STEP_EXIT_INPUT, STEP_EXIT_TEMPORARY } from '@ein/client';
 import { audioFileName, imageFileName, imageRolesOf, type RenditionKind, type RenditionTable, storyboardFileName, videoFileName } from '@ein/api';
 import { readRenditionTable } from '@ein/client';
-import { EmsError, generations, stepExitCode } from '@ems/client';
+import { generations, stepExitCode } from '@ems/client';
 import { UNDECODABLE_ATTR } from '@media/probe';
 import { RENDITIONS_AT_ATTR, RENDITIONS_FOR_ATTR, renditionSignature, TRANSCODE_REFUSED_ATTR, type TranscodeRefusal } from '@media/rendition-marker';
 import { generateImageLadder, type ImageLadderTarget } from '@media/image-ladder';
@@ -349,12 +349,6 @@ const generateDerivatives = async (cmd: Command): CmdReturn => {
       try {
         created.push((await writeStoryboard(cmd, { id: nodeInfo.id, rendition: renditionPath }, outputPath, storyboard)).made);
       } catch (error) {
-        // An EMS from before the op has no route for it; the sheet waits for one that has.
-        if (error instanceof EmsError && error.code === 'http_404') {
-          if (verbose) await cmd.writeLn(`${outputPath} skipped: this EMS makes no storyboards`);
-          unmakeable.add(storyboardFileName(storyboard));
-          continue;
-        }
         await cmd.writeError(`generate-derivatives: ${outputPath}: ${error instanceof Error ? error.message : String(error)}\n`);
         // A rendition EMS cannot read will not be read on a retry either. Failing the step for it
         // would only have the pipeline run again, and a turned video's run re-encodes it first.

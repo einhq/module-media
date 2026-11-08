@@ -2,7 +2,7 @@
 import { resolve } from '@std/path';
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags, stepPhase } from '@ein/client';
-import { EmsError, generations, readText, type ReadTextResult, stepExitCode } from '@ems/client';
+import { generations, isFileFault, readText, type ReadTextResult, stepExitCode } from '@ems/client';
 import { UNDECODABLE_ATTR } from '@media/probe';
 import { normalizeAngle, normalizeMirror } from '@media/orientation';
 import { clearExtractedText, storeExtractedText } from '@media/extracted-text';
@@ -96,7 +96,7 @@ const readTextCommand = async (cmd: Command): CmdReturn => {
       readBy = result.producer;
       await phase('ems answered');
     } catch (error) {
-      if (!(error instanceof EmsError && error.permanent)) {
+      if (!isFileFault(error)) {
         await cmd.writeError(`read-text: ${inputPath}: ${error instanceof Error ? error.message : String(error)}\n`);
         return stepExitCode(error);
       }

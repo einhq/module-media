@@ -22,7 +22,7 @@ export type Storyboard = { name: string; sha256: string; interval: number; count
 /** What `detect-chapters` says of one file: the cuts it found, or why it looked for none. */
 export type DetectChaptersAnswer = {
   path: string;
-  skipped?: 'not-video' | 'undecodable' | 'detected' | 'no-rendition' | 'ems-lacks-op' | 'unreadable';
+  skipped?: 'not-video' | 'undecodable' | 'detected' | 'no-rendition' | 'unreadable';
   boundaries?: { t: number; score: number | null; kind: 'cut' | 'leader' }[];
   detectedBy?: string;
 };

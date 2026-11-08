@@ -21,14 +21,11 @@
 import { resolve } from '@std/path';
 import { videoFileName } from '@ein/api';
 import { type CmdReturn, collectUnknownFlags, type Command, parseArgs, readRenditionTable, reportUnknownFlags, shq, STEP_EXIT_TEMPORARY } from '@ein/client';
-import { EmsError, stepExitCode, videoShots } from '@ems/client';
+import { isFileFault, stepExitCode, videoShots } from '@ems/client';
 import type { DetectChaptersAnswer } from '@media/api';
 import { type ChapterBoundary, chaptersToVtt } from '@media/chapters';
 import { UNDECODABLE_ATTR } from '@media/probe';
 import { reportUnwritable } from '@media/writable';
-
-/** EMS's codes that are the file's own fault, when permanent: no run can get past the same file. */
-const FILE_FAULTS = new Set(['undecodable', 'unsupported', 'refused']);
 
 /**
  * The score a cut must reach in a video whose EXIF names the camera or phone that recorded it.
@@ -122,13 +119,9 @@ const detectChapters = async (cmd: Command): CmdReturn => {
     if (verbose) await cmd.writeLn(`Looking for cuts in ${renditionPath}${camera ? ` (a camera's take: threshold ${CAMERA_THRESHOLD}, no leader)` : ''}...`);
     shots = await videoShots(cmd, renditionPath, camera ? { threshold: CAMERA_THRESHOLD, leader: false } : {});
   } catch (error) {
-    // An EMS from before the op has no route for it; the chapters wait for one that has.
-    if (error instanceof EmsError && error.code === 'http_404') {
-      return await answer({ path: inputPath, skipped: 'ems-lacks-op' }, `${inputPath}: this EMS finds no cuts`);
-    }
     const reason = error instanceof Error ? error.message : String(error);
     await cmd.writeError(`detect-chapters: ${inputPath}: ${reason}\n`);
-    if (!(error instanceof EmsError && error.permanent && FILE_FAULTS.has(error.code))) {
+    if (!isFileFault(error)) {
       return stepExitCode(error) === STEP_EXIT_TEMPORARY ? STEP_EXIT_TEMPORARY : 1;
     }
     if (typeof existing?.detectedAt === 'string') {

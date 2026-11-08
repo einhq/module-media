@@ -114,6 +114,22 @@ Deno.test({
       assertEquals([attrs.ocrBy, typeof attrs.textIndexedAt], [PPOCR, 'string']);
     });
 
+    await t.step("a permanent failure that is not the picture's, or an EMS without ocr.read, marks nothing", async () => {
+      const elsewhere = `${LIBRARY}/stad/files/annan.jpg`;
+      await cmd.shouldSucceed(`mknode -t file ${elsewhere} --as name=annan.jpg --as mimetype=image/jpeg`);
+      for (
+        const [error, status] of [
+          [{ code: 'op_not_served', message: 'ocr.read is not served by this instance (laptop)', permanent: true }, 404],
+          [{ code: 'path_not_granted', message: 'not granted', permanent: true }, 403],
+          [{ code: 'files_unavailable', message: 'could not mount the caller', permanent: false }, 502],
+        ] as const
+      ) {
+        answer = { error, status };
+        assertEquals((await run(elsewhere)).success, false, error.code);
+        assertEquals((await vfs.get(ADMIN_ACCESS, elsewhere)).attrs.textIndexedAt, undefined, error.code);
+      }
+    });
+
     await t.step('EMS busy is a failure to retry, and marks nothing', async () => {
       const later = `${LIBRARY}/stad/files/senare.jpg`;
       await cmd.shouldSucceed(`mknode -t file ${later} --as name=senare.jpg --as mimetype=image/jpeg`);

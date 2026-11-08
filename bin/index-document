@@ -2,7 +2,7 @@
 import { resolve } from '@std/path';
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags, shq, stepPhase } from '@ein/client';
-import { EmsError, extractText, stepExitCode } from '@ems/client';
+import { extractText, isFileFault, stepExitCode } from '@ems/client';
 import { storeExtractedText } from '@media/extracted-text';
 import { settleTextVectors } from '@media/text-markers';
 import { reportUnwritable } from '@media/writable';
@@ -95,7 +95,7 @@ const indexDocument = async (cmd: Command): CmdReturn => {
     await phase('ems answered');
     output = { text: extracted.text, summary: summarize(extracted.text), pages: extracted.pages, wordCount: extracted.wordCount };
   } catch (error) {
-    if (error instanceof EmsError && error.permanent) {
+    if (isFileFault(error)) {
       // The file itself is the problem — corrupt bytes, a format no extractor handles. Failing
       // here would spend the pipeline's remaining attempts on a result that cannot change and
       // leave a failed instance behind, so record "nothing to index" and succeed.
