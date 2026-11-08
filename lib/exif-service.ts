@@ -3,8 +3,8 @@
  *
  * `media.probe` runs exiftool (a stay-open pool there) and ffprobe for every video and audio
  * file, and hands back a normalized core with the tools' own dumps attached. What this module
- * keeps is the shape the rest of the media area reads: the exiftool dump as the one-element
- * array `exiftool -n -j` writes — every tag name in `types/exif.ts`, `exif-date.ts` and
+ * keeps is the shape the rest of the media area reads: the exiftool dump, ungrouped and numeric
+ * as `exiftool -n -j` writes it — every tag name in `types/exif.ts`, `exif-date.ts` and
  * `video-codec.ts` is exiftool's — and the stream probe `resolveMediaFacts` consumes.
  */
 
@@ -15,12 +15,6 @@ import type { StreamProbe } from '@media/probe';
 /** One `media.probe`, with both tools' dumps. */
 export async function probeFile(cmd: Command, vfsPath: string, mimetype?: string): Promise<ProbeResult> {
   return await probe(cmd, vfsPath, { mimetype, raw: ['exiftool', 'ffprobe'] });
-}
-
-/** The ungrouped numeric JSON array `exiftool -n -j` prints. */
-export async function extractExif(cmd: Command, vfsPath: string): Promise<Record<string, unknown>[]> {
-  const result = await probe(cmd, vfsPath, { raw: ['exiftool'] });
-  return [result.raw.exiftool ?? {}];
 }
 
 /** The stream half of a probe, in the shape `resolveMediaFacts` reads. */
