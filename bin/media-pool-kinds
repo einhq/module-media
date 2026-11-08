@@ -49,8 +49,11 @@ const poolKinds = async (cmd: Command, dir: string): Promise<PoolKinds & { ops: 
   return found;
 };
 
-/** How long each instance's capabilities may take: the services ask as they start a worker. */
-const WAIT_SECONDS = 10;
+/**
+ * How long each instance's capabilities may take: the services ask as they start a worker, and
+ * capabilities wait on the instance's model worker, which takes tens of seconds while it loads.
+ */
+const WAIT_SECONDS = 30;
 
 /** The kinds of `found` that the instance `name` serves every op of and stamps as the primary does. */
 const forInstance = async (cmd: Command, found: Awaited<ReturnType<typeof poolKinds>>, name: string): Promise<PoolKinds> => {
