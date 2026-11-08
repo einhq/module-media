@@ -8,6 +8,7 @@
 import { assertEquals, assertStringIncludes } from '@std/assert';
 import type { PoolKinds } from '@media/api';
 import { ADMIN_ACCESS, createTestContext } from '@ein/testing';
+import { startStubEms } from '@ems/testing';
 
 const testCtx = createTestContext({ modules: ['media'] });
 
@@ -65,6 +66,47 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
         'diarize',
         'faces',
       ]);
+    });
+
+    await t.step('another instance takes the kinds whose ops it serves and stamps as the primary does', async () => {
+      await writeKinds('media-models', 'archive', 'faces ops=faces.detect,image.renditions\ndiarize\n');
+      const primary = startStubEms({
+        capabilities: {
+          ops: ['vision.embed', 'speech.transcribe', 'text.embed', 'faces.detect'],
+          models: { image_embed: 'siglip2', text_embed: 'bge-m3' },
+          signatures: { transcribe: 'cuda' },
+        },
+      });
+      const laptop = startStubEms({
+        capabilities: {
+          ops: ['vision.embed', 'speech.transcribe', 'text.embed', 'faces.detect', 'image.renditions'],
+          models: { image_embed: 'siglip2', text_embed: 'bge-m3' },
+          signatures: { transcribe: 'cpu' },
+        },
+      });
+      try {
+        await vfs.ensure(ADMIN_ACCESS, 'directory', '/etc', 'ems.d');
+        await vfs.ensure(ADMIN_ACCESS, 'file', '/etc/ems.d', 'laptop');
+        const handle = await vfs.open(ADMIN_ACCESS, '/etc/ems.d/laptop', { mode: 'w' });
+        try {
+          await handle.write(new TextEncoder().encode(JSON.stringify({ url: laptop.url })));
+        } finally {
+          await handle.close();
+        }
+        const env = `CFG_EMS_URL=${primary.url}`;
+        // Its transcripts would be stamped otherwise, and diarize names no ops: neither is the laptop's.
+        const kinds = String((await client.exec(`${env} media-pool-kinds models --instance laptop`, { json: false })).data).trim();
+        assertEquals(kinds, '--kind faces --kind embed-picture --kind embed-text');
+        assertEquals((await client.exec(`${env} media-pool-kinds models --instance laptop --expect='${kinds}'`, { json: false })).success, true);
+        assertEquals((await client.exec(`${env} media-pool-kinds models --instance laptop --expect='--kind faces'`, { json: false })).success, false);
+        assertEquals((await client.execJson<PoolKinds>(`${env} media-pool-kinds models --instance main`)).kinds.length, 7);
+        await laptop.close();
+        assertEquals(String((await client.exec(`${env} media-pool-kinds models --instance laptop`, { json: false })).data ?? '').trim(), '');
+        assertEquals((await client.exec(`${env} media-pool-kinds models --instance desktop`, { json: false })).success, false);
+      } finally {
+        await primary.close();
+        await laptop.close().catch(() => {});
+      }
     });
 
     await t.step('anything but cpu or models is refused', async () => {

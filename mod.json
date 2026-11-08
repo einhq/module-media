@@ -6,7 +6,7 @@
   "license": "MIT",
   "coreApi": "^0.12.4",
   "dependencies": {
-    "ems": "^0.10.26"
+    "ems": "^0.10.27"
   },
   "dropIns": {
     "media-worker.d": { "restarts": ["media-worker"] },

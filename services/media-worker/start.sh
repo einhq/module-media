@@ -19,7 +19,41 @@
 #
 # The pool path comes from POOLS_PATH, which boot exports into /etc/bashrc and this service
 # sources; a literal path would name an empty pool nothing writes to (ein/core#210).
+#
+# Every other instance of the media service (`ems-instance`) gets a worker of its own beside this
+# one, with the kinds that call EMS (`ops=`) whose ops it serves (`media-pool-kinds --instance`),
+# its own budget of slots, and steps that call it (CFG_EMS_INSTANCE). A job it cannot do goes
+# straight back for the others (--pass-on). Its worker stops when it stops answering or its kinds
+# change, and starts again once it answers with kinds to take. The service starts over when an
+# instance is added or removed, and when a worker ends.
 echo media-worker: starting
+
+others=$(ems-instance list --others --names 2>/dev/null)
+
+instance_worker() {
+  local instance_kinds slots
+  while true; do
+    instance_kinds=$(media-pool-kinds cpu --instance "$1" 2>/dev/null)
+    if [ -n "$instance_kinds" ]; then
+      slots=$(ems-instance show "$1" cpuSlots 2>/dev/null)
+      echo "media-worker: $1 takes $instance_kinds"
+      pipeline-worker --pool "${POOLS_PATH:-/var/pools}/media" --name "media-worker@$1" \
+        --capacity cpu="${slots:-2}" \
+        $instance_kinds \
+        --concurrency "${slots:-2}" \
+        --env CFG_EMS_INSTANCE="$1" --pass-on \
+        --while "media-pool-kinds cpu --instance $1 --expect='$instance_kinds'"
+    fi
+    sleep 30
+  done
+}
+
+instances_unchanged() {
+  while [ "$(ems-instance list --others --names 2>/dev/null)" = "$others" ]; do
+    sleep 60
+  done
+  echo "media-worker: the media service's instances changed, starting over"
+}
 
 kinds=$(media-pool-kinds cpu)
 if [ -z "$kinds" ]; then
@@ -34,4 +68,10 @@ pipeline-worker --pool "${POOLS_PATH:-/var/pools}/media" \
   --capacity cpu="${CFG_CPU_SLOTS:-2}" \
   $kinds \
   --reserve-capacity cpu="${CFG_CPU_NON_ENTRY_SLOTS:-1}" \
-  --concurrency "${CFG_CPU_WORKERS:-4}"
+  --concurrency "${CFG_CPU_WORKERS:-4}" &
+for name in $others; do
+  instance_worker "$name" &
+done
+instances_unchanged &
+wait -n
+exit 1

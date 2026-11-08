@@ -4,11 +4,19 @@
  * flags: every module's drop-in, `/etc/media-worker.d/<module>/kinds` for the CPU worker and
  * `/etc/media-models.d/<module>/kinds` for the model workers, the modules in name order. A kind a
  * line, in the order offered; `reserve` after a CPU kind puts it in the share of the budget kept
- * for the work after ingest. `#` starts a comment. A kind two modules name counts once.
+ * for the work after ingest, and `ops=` names the EMS ops its steps call. `#` starts a comment. A
+ * kind two modules name counts once.
+ *
+ * `--instance` gives the kinds for a worker of another EMS instance: those whose ops it serves, all
+ * of them, and stamps as the primary does, and none while either does not answer. A kind that names
+ * no ops runs in EiN alone and stays with the primary's workers. `--expect` exits 1 unless the
+ * answer is the one given, for `pipeline-worker --while` to stop a worker whose kinds have changed.
  */
 
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
+import { capabilitiesOf } from '@ems/client';
+import { PRIMARY, primaryInstance, readInstance, sameGenerations } from '@ems/instances';
 import type { PoolKinds } from '@media/api';
 
 /** Where each worker's drop-ins are. */
@@ -23,9 +31,9 @@ const readText = async (cmd: Command, path: string): Promise<string> => {
   }
 };
 
-/** The kinds the drop-ins under `dir` name; none when there are no drop-ins. */
-const poolKinds = async (cmd: Command, dir: string): Promise<PoolKinds> => {
-  const found: PoolKinds = { kinds: [], reserve: [] };
+/** The kinds the drop-ins under `dir` name, and the EMS ops of each; none when there are no drop-ins. */
+const poolKinds = async (cmd: Command, dir: string): Promise<PoolKinds & { ops: Map<string, string[]> }> => {
+  const found = { kinds: [] as string[], reserve: [] as string[], ops: new Map<string, string[]>() };
   const modules = await cmd.sys.vfs.children(cmd.access, dir).then((entries) => entries.map((entry) => entry.name).sort(), () => []);
   for (const module of modules) {
     const text = await readText(cmd, `${dir}/${module}/kinds`).catch(() => '');
@@ -34,14 +42,33 @@ const poolKinds = async (cmd: Command, dir: string): Promise<PoolKinds> => {
       if (!kind || found.kinds.includes(kind)) continue;
       found.kinds.push(kind);
       if (words.includes('reserve')) found.reserve.push(kind);
+      const ops = words.find((word) => word.startsWith('ops='))?.slice(4).split(',').filter(Boolean) ?? [];
+      found.ops.set(kind, ops);
     }
   }
   return found;
 };
 
+/** How long each instance's capabilities may take: the services ask as they start a worker. */
+const WAIT_SECONDS = 10;
+
+/** The kinds of `found` that the instance `name` serves every op of and stamps as the primary does. */
+const forInstance = async (cmd: Command, found: Awaited<ReturnType<typeof poolKinds>>, name: string): Promise<PoolKinds> => {
+  const instance = await readInstance(cmd, name);
+  if (!instance) throw new Error(`no instance called ${name}`);
+  if (instance.primary) return { kinds: found.kinds, reserve: found.reserve };
+  const [primary, own] = await Promise.all([capabilitiesOf(cmd, await primaryInstance(cmd), WAIT_SECONDS), capabilitiesOf(cmd, instance, WAIT_SECONDS)]);
+  if (!primary || !own) return { kinds: [], reserve: [] };
+  const kinds = found.kinds.filter((kind) => {
+    const ops = found.ops.get(kind) ?? [];
+    return ops.length > 0 && sameGenerations(primary, own, ops);
+  });
+  return { kinds, reserve: found.reserve.filter((kind) => kinds.includes(kind)) };
+};
+
 const mediaPoolKinds = async (cmd: Command): CmdReturn => {
   const unknown: string[] = [];
-  const flags = parseArgs(cmd.args, { boolean: ['reverse'], unknown: collectUnknownFlags(unknown) });
+  const flags = parseArgs(cmd.args, { boolean: ['reverse'], string: ['instance', 'expect'], unknown: collectUnknownFlags(unknown) });
   if (await reportUnknownFlags(cmd, unknown)) return 1;
   const worker = String(flags._[0] ?? '');
   const dir = DROP_INS[worker];
@@ -50,14 +77,23 @@ const mediaPoolKinds = async (cmd: Command): CmdReturn => {
     return 1;
   }
 
-  const found = await poolKinds(cmd, dir);
+  const all = await poolKinds(cmd, dir);
+  let found: PoolKinds;
+  try {
+    found = flags.instance ? await forInstance(cmd, all, String(flags.instance)) : { kinds: all.kinds, reserve: all.reserve };
+  } catch (error) {
+    await cmd.writeError(`media-pool-kinds: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
   // The second models worker goes through the same backlogs the other way round.
   if (flags.reverse) found.kinds.reverse();
+  const line = [...found.kinds.map((kind) => `--kind ${kind}`), ...found.reserve.map((kind) => `--reserve-kind ${kind}`)].join(' ');
+  if (flags.expect !== undefined) return line === String(flags.expect).trim() ? 0 : 1;
   if (cmd.json) {
     await cmd.writeJSON(found satisfies PoolKinds);
     return 0;
   }
-  await cmd.writeLn([...found.kinds.map((kind) => `--kind ${kind}`), ...found.reserve.map((kind) => `--reserve-kind ${kind}`)].join(' '));
+  await cmd.writeLn(line);
   return 0;
 };
 
@@ -66,8 +102,16 @@ mediaPoolKinds.spec = {
   effect: 'read' as const,
   description: "The kinds of work a worker of the media pool takes, from the modules' drop-ins, as pipeline-worker's flags",
   args: [{ name: 'worker', type: 'string' as const, description: 'cpu (the media-worker service) or models (models and models-second)' }],
-  flags: [{ name: 'reverse', type: 'bool' as const, description: 'The kinds in the reverse order, as the second models worker takes them' }],
-  examples: ['media-pool-kinds cpu', 'media-pool-kinds models --reverse', 'JSON_OUTPUT=1 media-pool-kinds models'],
+  flags: [
+    { name: 'reverse', type: 'bool' as const, description: 'The kinds in the reverse order, as the second models worker takes them' },
+    {
+      name: 'instance',
+      type: 'string' as const,
+      description: `The kinds for a worker of this EMS instance: those it serves every op of and stamps as the primary does (${PRIMARY}, the primary, takes every kind)`,
+    },
+    { name: 'expect', type: 'string' as const, description: 'Print nothing, and exit 1 unless the flags would be these' },
+  ],
+  examples: ['media-pool-kinds cpu', 'media-pool-kinds models --reverse', 'media-pool-kinds models --instance laptop', 'JSON_OUTPUT=1 media-pool-kinds models'],
   returns: 'the flags (--kind for each kind, --reserve-kind for each reserved one); in JSON the kinds in order and the reserved ones.',
 };
 

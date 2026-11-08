@@ -1,8 +1,10 @@
 # The media module's own model-bound work in the media pool, a kind a line: a backlog the models
-# worker rotates between with the other modules'. Every kind a pipeline step names with
-# `requires: models` is here, or it never runs (test/pipelines.test.ts).
-shots                    # a video's cuts, its chapters
-embed-picture            # picture vectors, for search by what a picture shows
-ocr                      # the text written in a picture
-embed-text               # vectors of a file's texts
-transcribe               # what is said in a video or recording
+# worker rotates between with the other modules'. `ops=` names the EMS ops a kind's steps call: a
+# worker for another EMS instance takes the kind only when that instance serves them all and stamps
+# them as the primary does. Every kind a pipeline step names with `requires: models` is here, or it
+# never runs (test/pipelines.test.ts).
+shots ops=video.shots                               # a video's cuts, its chapters
+embed-picture ops=vision.embed                      # picture vectors, for search by what a picture shows
+ocr ops=ocr.read,text.embed                         # the text written in a picture
+embed-text ops=text.embed                           # vectors of a file's texts
+transcribe ops=speech.transcribe,text.embed         # what is said in a video or recording

@@ -1,8 +1,10 @@
 # The media module's own work in the media pool that takes the media worker's CPU budget, a kind a
 # line, in the order offered. `reserve` puts a kind in the share kept for the work after ingest
-# (CFG_CPU_NON_ENTRY_SLOTS). Every kind a pipeline step names with `requires: cpu` is here, or it
-# never runs (test/pipelines.test.ts). All wait on EMS, which reads, decodes and encodes the media:
-ingest                   # a file's metadata (EMS reads it) and its hash       (priority 100)
-stills reserve           # pictures of every media file, a video's storyboard  (priority 60)
-transcode reserve        # a video's or recording's web rendition, two slots   (priority 10)
-fingerprint reserve      # the prints that find copies                         (priority 30)
+# (CFG_CPU_NON_ENTRY_SLOTS). `ops=` names the EMS ops a kind's steps call: a worker for another EMS
+# instance takes the kind only when that instance serves them all. Every kind a pipeline step names
+# with `requires: cpu` is here, or it never runs (test/pipelines.test.ts). All wait on EMS, which
+# reads, decodes and encodes the media:
+ingest ops=media.probe                                                           # a file's metadata (EMS reads it) and its hash       (priority 100)
+stills reserve ops=image.renditions,video.poster,audio.waveform,video.storyboard # pictures of every media file, a video's storyboard  (priority 60)
+transcode reserve ops=video.transcode,audio.transcode                            # a video's or recording's web rendition, two slots   (priority 10)
+fingerprint reserve ops=fingerprint.compute                                      # the prints that find copies                         (priority 30)
