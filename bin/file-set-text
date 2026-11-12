@@ -10,22 +10,21 @@
  * engine's reading is kept any more. Empty text removes the text, and the mark keeps it removed.
  * Its text vectors are settled last (`textVectorsBy`, `@media/text-markers`).
  *
- * `--text-base64` is what the UI uses, as for `file-set-description`: the text is arbitrary
- * multi-line text on its way into a shell command string.
+ * `--text -` reads the text from stdin, which is how the UI sends it: multi-line text with quotes
+ * in it does not have to go through a command line.
  */
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
 import { clearExtractedText, storeExtractedText } from '@media/extracted-text';
 import { settleTextVectors } from '@media/text-markers';
 import { reportUnwritable } from '@media/writable';
-import { decodeBase64 } from '@std/encoding/base64';
 import { resolve } from '@std/path';
 
-const USAGE = 'file-set-text: usage: file-set-text <file> [--text <s> | --text-base64 <b64>]';
+const USAGE = 'file-set-text: usage: file-set-text <file> --text <s>|-';
 
 const fileSetText = async (cmd: Command): CmdReturn => {
   const unknown: string[] = [];
-  const flags = parseArgs(cmd.args, { string: ['text', 'text-base64'], unknown: collectUnknownFlags(unknown) });
+  const flags = parseArgs(cmd.args, { string: ['text'], unknown: collectUnknownFlags(unknown) });
   if (await reportUnknownFlags(cmd, unknown)) return 1;
 
   const target = flags._[0] as string | undefined;
@@ -34,20 +33,11 @@ const fileSetText = async (cmd: Command): CmdReturn => {
     return 1;
   }
 
-  let given: string;
-  if (flags['text-base64'] !== undefined) {
-    try {
-      given = new TextDecoder().decode(decodeBase64(flags['text-base64']));
-    } catch {
-      await cmd.writeError('file-set-text: --text-base64: not valid base64\n');
-      return 1;
-    }
-  } else if (flags.text !== undefined) {
-    given = flags.text;
-  } else {
+  if (flags.text === undefined) {
     await cmd.writeError(`${USAGE}\n`);
     return 1;
   }
+  const given = flags.text === '-' ? await cmd.stdin.text() : flags.text;
 
   const path = resolve(cmd.cwd, target);
   let node;
@@ -102,8 +92,7 @@ fileSetText.spec = {
     { name: 'file', type: 'path' as const, description: 'VFS path to a picture' },
   ],
   flags: [
-    { name: 'text', type: 'string' as const, description: 'the text; empty removes it' },
-    { name: 'text-base64', type: 'string' as const, description: 'the text, base64-encoded (for multi-line text)' },
+    { name: 'text', type: 'string' as const, description: 'the text; empty removes it, - reads it from stdin' },
   ],
   examples: [
     "file-set-text /archive/albums/Exempelalbum_2019/files/brev.jpg --text 'Kära Anna'",

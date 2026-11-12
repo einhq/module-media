@@ -3,7 +3,7 @@
  * file-set-transcript — write what is said in a video or a recording by hand, for good.
  *
  * Replaces the cues of `<file>/metadata/transcript` with WebVTT a person wrote or corrected, given
- * on stdin or as `--vtt-base64` (the UI's way, as for `file-set-text`). The node is written in
+ * on stdin. The node is written in
  * place, so the voices under it (`speakers/`) stay; a file with no transcript gets one. A cue that
  * is unchanged keeps the word timings whisper gave it. The chunks are cut and embedded again, so
  * search finds the corrected words. The embed goes ahead of batch work and does not wait for an
@@ -21,11 +21,10 @@ import { storeCurrentChunks } from '@ems/text-embedding';
 import { settleTextVectors, TRANSCRIPT_KEPT, TRANSCRIPT_WITH_ATTR } from '@media/text-markers';
 import { CHUNK_TARGET_SECONDS, chunkSegments, chunkVectors, parseVtt, segmentsToVtt, type TranscriptSegment } from '@media/transcript';
 import { reportUnwritable } from '@media/writable';
-import { decodeBase64 } from '@std/encoding/base64';
 import { resolve } from '@std/path';
 import { toText } from '@std/streams/to-text';
 
-const USAGE = 'file-set-transcript: usage: file-set-transcript <file> [--vtt-base64 <b64>] (WebVTT on stdin without it)';
+const USAGE = 'file-set-transcript: usage: file-set-transcript <file> < transcript.vtt';
 
 /** A cue's identity for keeping its word timings: its times to the millisecond and its words. */
 const cueKey = (segment: TranscriptSegment): string => `${Math.round(segment.start * 1000)}|${Math.round(segment.end * 1000)}|${segment.text}`;
@@ -41,7 +40,7 @@ const readVtt = async (cmd: Command, path: string): Promise<string> => {
 
 const fileSetTranscript = async (cmd: Command): CmdReturn => {
   const unknown: string[] = [];
-  const flags = parseArgs(cmd.args, { string: ['vtt-base64'], unknown: collectUnknownFlags(unknown) });
+  const flags = parseArgs(cmd.args, { unknown: collectUnknownFlags(unknown) });
   if (await reportUnknownFlags(cmd, unknown)) return 1;
 
   const target = flags._[0] as string | undefined;
@@ -50,17 +49,7 @@ const fileSetTranscript = async (cmd: Command): CmdReturn => {
     return 1;
   }
 
-  let given: string;
-  if (flags['vtt-base64'] !== undefined) {
-    try {
-      given = new TextDecoder().decode(decodeBase64(flags['vtt-base64']));
-    } catch {
-      await cmd.writeError('file-set-transcript: --vtt-base64: not valid base64\n');
-      return 1;
-    }
-  } else {
-    given = await cmd.stdin.text();
-  }
+  const given = await cmd.stdin.text();
   if (!/^﻿?WEBVTT(?:[ \t\n\r]|$)/.test(given)) {
     await cmd.writeError('file-set-transcript: not WebVTT: it must begin with WEBVTT\n');
     return 1;
@@ -148,12 +137,9 @@ const fileSetTranscript = async (cmd: Command): CmdReturn => {
 fileSetTranscript.spec = {
   name: 'file-set-transcript',
   effect: 'write' as const,
-  description: 'Write what is said in a video or a recording by hand, in place of the transcript',
+  description: 'Write what is said in a video or a recording by hand, in place of the transcript, from WebVTT on stdin',
   args: [
     { name: 'file', type: 'path' as const, description: 'VFS path to a video or a recording' },
-  ],
-  flags: [
-    { name: 'vtt-base64', type: 'string' as const, description: 'the transcript as WebVTT, base64-encoded; without it, WebVTT is read from stdin' },
   ],
   examples: [
     'cat /home/admin/rattad.vtt | file-set-transcript /archive/albums/Exempelalbum_2019/files/MVI_0042.MOV',

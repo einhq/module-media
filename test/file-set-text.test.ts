@@ -12,12 +12,6 @@ const LIBRARY = '/library';
 
 const testCtx = createTestContext({ modules: ['media'] });
 
-const base64 = (text: string): string => {
-  let binary = '';
-  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
-  return btoa(binary);
-};
-
 Deno.test({
   name: 'file-set-text',
   sanitizeResources: false,
@@ -48,7 +42,7 @@ Deno.test({
     await cmd.shouldSucceed(`mknode -t file ${CONTENT} --as mimetype=text/plain --tier db --as lines=read`);
 
     await t.step('the text is replaced, its lines dropped and the file marked', async () => {
-      const out = await client.execJson(`JSON_OUTPUT=1 file-set-text ${LETTER} --text-base64 ${base64('Kära Anna,\nvi har det bra.\n')}`);
+      const out = await client.execJson(`JSON_OUTPUT=1 file-set-text ${LETTER} --text -`, { stdin: 'Kära Anna,\nvi har det bra.\n' });
       assertEquals(out, { ok: true, path: LETTER, wordCount: 6 });
       assertEquals(await content(), 'Kära Anna,\nvi har det bra.');
       assertEquals((await vfs.get(ADMIN_ACCESS, CONTENT)).attrs.lines ?? null, null);

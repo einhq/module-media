@@ -7,7 +7,7 @@
  */
 
 import { assert, assertEquals, assertStringIncludes } from '@std/assert';
-import { ADMIN_ACCESS, createTestContext, testCommands } from '@ein/testing';
+import { ADMIN_ACCESS, createTestContext, type ShellClient, testCommands } from '@ein/testing';
 import { startStubEms } from '@ems/testing';
 
 /** Where the files under test live: any folder. */
@@ -15,11 +15,8 @@ const LIBRARY = '/library';
 
 const testCtx = createTestContext({ modules: ['media'] });
 
-const base64 = (text: string): string => {
-  let binary = '';
-  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
-  return btoa(binary);
-};
+/** `file-set-transcript <path>` with `vtt` on stdin, after `env` (`CFG_EMS_URL=… `). */
+const setTranscript = (client: ShellClient, path: string, vtt: string, env = '') => client.exec(`${env}file-set-transcript ${path}`, { stdin: vtt });
 
 const WHISPER = [
   'WEBVTT',
@@ -83,7 +80,7 @@ Deno.test({
     await cmd.shouldSucceed(`mkdir -p ${TRANSCRIPT}/speakers`);
 
     await t.step('the cues are replaced in place, in order, and an unchanged one keeps its words', async () => {
-      const out = await client.execJson(`JSON_OUTPUT=1 file-set-transcript ${CLIP} --vtt-base64 ${base64(CORRECTED)}`);
+      const out = await client.execJson(`JSON_OUTPUT=1 file-set-transcript ${CLIP}`, { stdin: CORRECTED });
       assertEquals(out, { ok: true, path: CLIP, segmentCount: 2 });
       const vtt = await read(TRANSCRIPT);
       assertStringIncludes(vtt, '00:00:01.000 --> 00:00:02.500\n<00:00:01.000>We <00:00:01.400>took');
@@ -107,7 +104,8 @@ Deno.test({
     });
 
     await t.step('no lines leave an empty transcript, with no speech', async () => {
-      await cmd.shouldSucceed(`file-set-transcript ${RECORDING} --vtt-base64 ${base64('WEBVTT\n')}`);
+      const set = await setTranscript(client, RECORDING, 'WEBVTT\n');
+      assert(set.success, set.error);
       const { attrs } = await vfs.get(ADMIN_ACCESS, `${RECORDING}/metadata/transcript`);
       assertEquals([attrs.segmentCount, attrs.speech], [0, false]);
     });
@@ -118,7 +116,8 @@ Deno.test({
         ops: { 'text.embed': (body) => ({ result: { embeddings: (body.texts as string[]).map(() => [1, 0]), dimension: 2 }, producer: BGE }) },
       });
       try {
-        await cmd.shouldSucceed(`CFG_EMS_URL=${stub.url} file-set-transcript ${CLIP} --vtt-base64 ${base64(CORRECTED)}`);
+        const set = await setTranscript(client, CLIP, CORRECTED, `CFG_EMS_URL=${stub.url} `);
+        assert(set.success, set.error);
         const embed = stub.requests.find((request) => request.op === 'text.embed');
         assertEquals((embed?.body.options as { priority?: string } | undefined)?.priority, 'interactive');
         assertEquals((await vfs.get(ADMIN_ACCESS, `${TRANSCRIPT}/text_bgem3`)).attrs.embeddedBy, BGE);
@@ -128,16 +127,21 @@ Deno.test({
 
       // A batch call would retry the refused connection for the whole 90 s budget.
       const started = Date.now();
-      const out = await client.exec(`CFG_EMS_URL=http://127.0.0.1:1 CFG_EMS_CONNECT_RETRY=90 file-set-transcript ${CLIP} --vtt-base64 ${base64(CORRECTED)} 2>&1`);
+      const out = await client.exec(`CFG_EMS_URL=http://127.0.0.1:1 CFG_EMS_CONNECT_RETRY=90 file-set-transcript ${CLIP} 2>&1`, { stdin: CORRECTED });
       assert(out.success, out.error);
       assertStringIncludes(String(out.data), 'saved, but not yet searchable');
       assert(Date.now() - started < 5000, `the save took ${Date.now() - started} ms`);
     });
 
     await t.step('anything but WebVTT, a backwards cue, or a picture is refused', async () => {
-      await cmd.shouldFailWith(`file-set-transcript ${CLIP} --vtt-base64 ${base64('1\n00:00:01.000 --> 00:00:02.000\nx\n')}`, 'not WebVTT');
-      await cmd.shouldFailWith(`file-set-transcript ${CLIP} --vtt-base64 ${base64('WEBVTT\n\n00:00:03.000 --> 00:00:02.000\nx\n')}`, 'ends before it starts');
-      await cmd.shouldFailWith(`file-set-transcript ${PICTURE} --vtt-base64 ${base64('WEBVTT\n')}`, 'not a video or a recording');
+      const refused = async (path: string, vtt: string, why: string) => {
+        const out = await setTranscript(client, path, vtt);
+        assert(!out.success, `${path} was not refused`);
+        assertStringIncludes(String(out.error), why);
+      };
+      await refused(CLIP, '1\n00:00:01.000 --> 00:00:02.000\nx\n', 'not WebVTT');
+      await refused(CLIP, 'WEBVTT\n\n00:00:03.000 --> 00:00:02.000\nx\n', 'ends before it starts');
+      await refused(PICTURE, 'WEBVTT\n', 'not a video or a recording');
     });
   } finally {
     client.close();

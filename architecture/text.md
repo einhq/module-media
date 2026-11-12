@@ -24,7 +24,7 @@ too little text to tell. `file-set-text-language <file> <code|auto>` sets it by 
 `ocrLanguageManual` on the file, which `read-text` gives EMS instead; the bridge reads that
 write on a read picture as `media.text.language-set`, and `media-ocr` reads it again with `-f`.
 Plan: wow `history/ocr-language.md`.
-`file-set-text <file> --text-base64 <b64>` (the lightbox's text editor) writes the text by
+`file-set-text <file> --text -` (the lightbox's text editor, which sends the text on stdin) writes the text by
 hand: it replaces `<file>/metadata/content` without `lines`, embeds it, and marks the file
 `textManual` with no `ocrBy`, so `media.ocr.stale` passes it by and `read-text` refuses it
 even with `-f`.
