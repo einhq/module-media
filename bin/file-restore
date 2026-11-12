@@ -3,7 +3,7 @@ import { basename, resolve } from '@std/path';
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, readRenditionTable, reportUnknownFlags, shq } from '@ein/client';
 import { imageFileName, imageRolesOf } from '@ein/api';
-import { denoise, findDefects, inpaint, renditions, type RestoreCallOptions, unfade } from '@ems/client';
+import { copyTags, denoise, findDefects, inpaint, type PictureEdit, renditions, type RestoreCallOptions, unfade } from '@ems/client';
 import type { FileRestoreAnswer, Restoration, RestorationStep } from '@media/api';
 import { generateImageLadder } from '@media/image-ladder';
 import { normalizeAngle, normalizeMirror, pictureDims } from '@media/orientation';
@@ -24,8 +24,13 @@ import { reportUnwritable } from '@media/writable';
  * of finding one — the finder's corrected by hand, or a blemish painted on any photo — and keeps it
  * beside the copy the same way: a one-channel PNG of the picture as stored, nonzero where marked.
  *
+ * The copy carries the file's metadata (`image.copy_tags`): its date, camera, place and colour
+ * profile, an XMP history naming the steps, and an IPTC digital source type saying how it was made:
+ * by a trained model painting it (`--fill lama`) or enhanced by algorithm.
+ *
  * EMS reads the picture as stored, so the version is too: it takes the file's turn (`angle`,
- * `mirror`) to be shown upright. A person waits for it, so the steps go ahead of batch work.
+ * `mirror`) to be shown upright, and carries it as its EXIF orientation. A person waits for it, so
+ * the steps go ahead of batch work.
  */
 
 /** The pictures EMS's restoration ops read (OpenCV): not RAW, HEIF or AVIF. */
@@ -127,9 +132,8 @@ const fileRestore = async (cmd: Command): CmdReturn => {
   let mask: string | undefined;
   let marked: number | undefined;
   try {
-    for (const [index, step] of plan.entries()) {
-      const last = index === plan.length - 1;
-      const output = await stage(`${step}.${ext}`, last);
+    for (const step of plan) {
+      const output = await stage(`${step}.${ext}`, false);
       if (step === 'unfade') {
         const done = await unfade(cmd, source, { output, format }, call);
         steps.push({ op: 'image.unfade', params: { levels: done.levels, gammas: done.gammas }, producer: done.producer });
@@ -156,11 +160,32 @@ const fileRestore = async (cmd: Command): CmdReturn => {
       source = output;
     }
 
+    const at = new Date().toISOString();
+    const tagged = await stage(`tags.${ext}`, true);
+    const history: PictureEdit[] = steps.map((step) => ({
+      action: 'edited',
+      when: at,
+      softwareAgent: step.producer,
+      parameters: `${step.op} ${JSON.stringify(step.params)}`,
+      changed: '/',
+    }));
+    const generative = steps.some((step) => step.op === 'image.inpaint' && step.params.method === 'lama');
+    await copyTags(cmd, source, {
+      source: inputPath,
+      output: tagged,
+      angle,
+      mirror,
+      history,
+      digitalSourceType: generative ? 'compositeWithTrainedAlgorithmicMedia' : 'algorithmicallyEnhanced',
+    }, call);
+    await syncNonEmpty(cmd, tagged, 'image.copy_tags');
+    source = tagged;
+
     const name = await nextName(cmd, dir, ext);
     const path = `${dir}/${name}`;
     await cmd.sys.vfs.rename(cmd.access, dir, basename(source), dir, name, { failIfExists: true });
     temps.splice(temps.indexOf(source), 1);
-    const restoration: Restoration = { steps, at: new Date().toISOString(), ...(marked !== undefined ? { marked } : {}) };
+    const restoration: Restoration = { steps, at, ...(marked !== undefined ? { marked } : {}) };
     const { width, height } = node.attrs;
     await cmd.sys.vfs.update(cmd.access, path, {
       attrs: { sourceId: node.id, frozen: true, restoration, angle, mirror, ...(width ? { width } : {}), ...(height ? { height } : {}) },

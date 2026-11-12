@@ -1,8 +1,8 @@
 /**
  * `file-restore`: the steps asked for run in order through EMS, each reading what the one before
- * wrote, and what is left is one frozen version beside the file, with the mask filled (the defect
- * finder's or one given) and its marks under it and renditions of its own. The file is never
- * written, and no temp stays behind.
+ * wrote, and what is left is one frozen version beside the file, carrying the file's tags and the
+ * steps as its history, with the mask filled (the defect finder's or one given) and its marks under
+ * it and renditions of its own. The file is never written, and no temp stays behind.
  */
 
 import { assert, assertEquals } from '@std/assert';
@@ -13,7 +13,7 @@ import type { FileRestoreAnswer } from '@media/api';
 const fileRoot = await Deno.makeTempDir({ prefix: 'ein-file-restore-' });
 const testCtx = createTestContext({ modules: ['media'], fileRoot });
 
-type Body = { file: { path: string; angle?: number }; mask?: { path: string }; output?: { path: string; format?: string }; [key: string]: unknown };
+type Body = { file: { path: string; angle?: number }; source?: { path: string }; mask?: { path: string }; output?: { path: string; format?: string }; [key: string]: unknown };
 
 Deno.test({
   name: 'file-restore writes a version of a picture through the EMS steps asked for',
@@ -37,6 +37,14 @@ Deno.test({
       'image.defects': step('image.defects', { marked: 120, fraction: 0.0005 }),
       'image.inpaint': step('image.inpaint', { filled: 120 }),
       'image.denoise': step('image.denoise', {}),
+      // The picture as it was given, as exiftool leaves the pixels.
+      'image.copy_tags': async (raw) => {
+        const body = raw as unknown as Body;
+        const read = await Deno.readTextFile(body.file.path);
+        calls.push({ op: 'image.copy_tags', body, read });
+        await Deno.writeTextFile(body.output!.path, read);
+        return { result: { path: body.output!.path, bytes: read.length }, meta: { producer: 'exiftool/13.10' } };
+      },
       'image.renditions': async (raw) => {
         const body = raw as unknown as { file: { path: string; angle: number }; targets: { output: { path: string; format?: string } }[] };
         calls.push({ op: 'image.renditions', body: body as unknown as Body, read: '' });
@@ -45,6 +53,8 @@ Deno.test({
       },
     },
   });
+  const restoring = () => calls.filter((c) => c.op !== 'image.renditions' && c.op !== 'image.copy_tags');
+  const tagging = () => calls.filter((c) => c.op === 'image.copy_tags');
   const env = `CFG_EMS_URL=${stub.url}`;
   const restore = (args: string) => client.execJson<FileRestoreAnswer>(`${env} JSON_OUTPUT=1 file-restore ${args}`);
 
@@ -56,7 +66,7 @@ Deno.test({
 
     await t.step('colours, dust and grain run in that order, each on what the one before wrote', async () => {
       const answer = await restore('/library/scans/print.jpg --unfade --dust --dark --fill lama --grain 0.4');
-      const ops = calls.filter((c) => c.op !== 'image.renditions');
+      const ops = restoring();
       assertEquals(ops.map((c) => c.op), ['image.unfade', 'image.defects', 'image.inpaint', 'image.denoise']);
       // The picture as stored, never turned: the version takes the file's turn instead.
       assertEquals(ops.map((c) => c.body.file.angle ?? 0), [0, 0, 0, 0]);
@@ -69,6 +79,16 @@ Deno.test({
       assertEquals(ops[3].body.strength, 0.4);
       assertEquals(ops.map((c) => c.body.output?.format), ['png', undefined, 'png', 'png']);
       assertEquals(ops.map((c) => (c.body.options as { priority?: string } | undefined)?.priority), ['interactive', 'interactive', 'interactive', 'interactive']);
+
+      // The last picture gets the file's tags, its turn, the steps as its history, and says a model painted it.
+      const [tags] = tagging();
+      assertEquals(tags.read, 'image.denoise of 4');
+      assertEquals(tags.body.source?.path, '/library/scans/print.jpg');
+      assertEquals(tags.body.file.angle, 90);
+      const history = tags.body.history as { action: string; software_agent: string; parameters: string }[];
+      assertEquals(history.map((event) => event.software_agent), ['image.unfade-model', 'image.defects-model', 'image.inpaint-model', 'image.denoise-model']);
+      assertEquals(history[2].parameters, 'image.inpaint {"method":"lama"}');
+      assertEquals(tags.body.digital_source_type, 'compositeWithTrainedAlgorithmicMedia');
 
       assertEquals(answer.path, '/library/scans/print.jpg/versions/restored-1.png');
       assertEquals(answer.restoration.steps.map((s) => s.producer), ['image.unfade-model', 'image.defects-model', 'image.inpaint-model', 'image.denoise-model']);
@@ -100,8 +120,9 @@ Deno.test({
     await t.step('a second restoration is a version of its own; one step alone keeps no mask', async () => {
       calls.length = 0;
       const answer = await restore('/library/scans/print.jpg --grain 0.5');
-      assertEquals(calls.filter((c) => c.op !== 'image.renditions').map((c) => c.op), ['image.denoise']);
+      assertEquals(restoring().map((c) => c.op), ['image.denoise']);
       assertEquals(answer.name, 'restored-2.png');
+      assertEquals(tagging()[0].body.digital_source_type, 'algorithmicallyEnhanced');
       assertEquals(answer.mask, undefined);
       assertEquals(answer.restoration.marked, undefined);
     });
@@ -110,7 +131,7 @@ Deno.test({
       await client.exec('printf painted > /library/scans/painted.png');
       calls.length = 0;
       const answer = await restore('/library/scans/print.jpg --unfade --mask /library/scans/painted.png --fill lama');
-      const ops = calls.filter((c) => c.op !== 'image.renditions');
+      const ops = restoring();
       assertEquals(ops.map((c) => c.op), ['image.unfade', 'image.inpaint']);
       assertEquals(ops[1].read, 'image.unfade of 1');
       assertEquals(ops[1].body.method, 'lama');
