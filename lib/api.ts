@@ -101,3 +101,19 @@ export type FingerprintsScanAnswer = {
 export type ExifExtractAnswer =
   | { indexedAt: string; width?: number; height?: number; sar?: number; angle?: number; undecodable?: string }
   | { held: string; by: string };
+
+/** One step of a restoration: the EMS op that made it, what it was asked, and what answered. */
+export type RestorationStep = { op: string; params: Record<string, unknown>; producer: string };
+
+/**
+ * How a restored version was made, on the version as its `restoration` attr: the steps in the order
+ * they ran, and when. `marked` is the share of the picture the defect finder marked, when it ran.
+ */
+export type Restoration = { steps: RestorationStep[]; at: string; marked?: number };
+
+/**
+ * `file-restore`: the version it wrote, `<file>/versions/<name>`, with the steps that made it;
+ * `mask` the defect finder's full-size mask beside it and `marks` the same in the picture's display
+ * frame, small enough for a page to lay over the original, when it ran.
+ */
+export type FileRestoreAnswer = { path: string; name: string; restoration: Restoration; mask?: string; marks?: string };
