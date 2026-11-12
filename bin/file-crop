@@ -1,0 +1,105 @@
+#!ts
+import { basename, dirname, extname, resolve } from '@std/path';
+import type { CmdReturn, Command } from '@ein/client';
+import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
+import { renditions } from '@ems/client';
+import type { FileCropAnswer } from '@media/api';
+import { normalizeAngle, normalizeMirror } from '@media/orientation';
+import { removeNode, syncNonEmpty } from '@media/staged-output';
+
+/**
+ * Cut a part of a picture out at its own resolution: a box in fractions of the picture as it is
+ * shown (turned by its `angle`, flopped by `mirror`), written as a new file, at most `--width` ×
+ * `--height` pixels and never enlarged. EMS reads the picture (`image.renditions` with `crop`), so
+ * any picture it makes renditions of can be cut, a TIFF scan or a HEIC photo too. A page zoomed in
+ * on a large picture shows the part in view this way, sharper than its largest rendition.
+ */
+
+const FORMATS: Record<string, 'avif' | 'webp' | 'jpeg' | 'png'> = { '.avif': 'avif', '.webp': 'webp', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.png': 'png' };
+
+/** A side in pixels, or undefined when not given; NaN when given and not a whole number above 0. */
+const side = (value: string | undefined): number | undefined => {
+  if (value === undefined) return undefined;
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : NaN;
+};
+
+const fileCrop = async (cmd: Command): CmdReturn => {
+  const unknown: string[] = [];
+  const flags = parseArgs(cmd.args, {
+    string: ['box', 'width', 'height', 'output'],
+    alias: { o: 'output' },
+    unknown: collectUnknownFlags(unknown),
+  });
+  if (await reportUnknownFlags(cmd, unknown)) return 1;
+  const fail = async (message: string): Promise<number> => {
+    await cmd.writeError(`file-crop: ${message}\n`);
+    return 1;
+  };
+
+  const inputPath = flags._.length > 0 ? resolve(cmd.cwd, String(flags._[0])) : '';
+  if (!inputPath) return await fail('missing file path');
+  if (!flags.output) return await fail('missing --output');
+  const output = resolve(cmd.cwd, flags.output);
+  const format = FORMATS[extname(output).toLowerCase()];
+  if (!format) return await fail(`${output}: name a .jpg, .png, .webp or .avif file`);
+  const parts = (flags.box ?? '').split(',').map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return await fail('--box is x,y,width,height in fractions of the picture as shown');
+  const [x, y, width, height] = parts;
+  if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 1.000001 || y + height > 1.000001) {
+    return await fail(`--box ${flags.box} is not inside the picture: each fraction from 0 to 1, width and height above 0`);
+  }
+  const bound = { width: side(flags.width), height: side(flags.height) };
+  if (Number.isNaN(bound.width) || Number.isNaN(bound.height)) return await fail('--width and --height are whole numbers of pixels above 0');
+
+  const node = await cmd.sys.vfs.get(cmd.access, inputPath).catch(() => undefined);
+  if (!node) return await fail(`${inputPath}: file not found or unreadable`);
+  const mimetype = typeof node.attrs.mimetype === 'string' ? node.attrs.mimetype : '';
+  if (node.type !== 'file' || !mimetype.startsWith('image/')) return await fail(`${inputPath}: not a picture (${mimetype || node.type})`);
+  if (await cmd.sys.vfs.exists(cmd.access, output)) return await fail(`${output}: already there`);
+
+  const parent = dirname(output);
+  await cmd.sys.vfs.create(cmd.access, 'file', parent, basename(output));
+  try {
+    const done = await renditions(cmd, inputPath, {
+      mimetype,
+      angle: normalizeAngle(node.attrs.angle),
+      mirror: normalizeMirror(node.attrs.mirror),
+      targets: [{
+        output,
+        format,
+        crop: { x, y, width: Math.min(width, 1 - x), height: Math.min(height, 1 - y) },
+        ...(bound.width || bound.height ? { box: { ...(bound.width ? { width: bound.width } : {}), ...(bound.height ? { height: bound.height } : {}) } } : {}),
+        fit: 'contain',
+      }],
+    });
+    await syncNonEmpty(cmd, output, 'image.renditions');
+    const [cut] = done.targets;
+    const answer: FileCropAnswer = { path: output, width: cut.width, height: cut.height, frame: done.frame };
+    if (cmd.json) await cmd.writeJSON(answer);
+    else await cmd.writeLn(`${output}: ${cut.width}×${cut.height} of ${done.frame.width}×${done.frame.height}`);
+    return 0;
+  } catch (error) {
+    await removeNode(cmd, output, parent);
+    return await fail(`${inputPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+};
+
+fileCrop.spec = {
+  name: 'file-crop',
+  effect: 'write' as const,
+  description: 'Cut a part of a picture out at its own resolution, into a new file',
+  args: [{ name: 'file', type: 'path' as const, description: 'The picture to cut from; it is never written' }],
+  flags: [
+    { name: 'box', type: 'string' as const, description: 'x,y,width,height of the part, in fractions of the picture as it is shown (turned and flopped)' },
+    { name: 'width', type: 'string' as const, description: 'The most pixels across the cut is written at; it is never enlarged' },
+    { name: 'height', type: 'string' as const, description: 'The most pixels high the cut is written at; it is never enlarged' },
+    { name: 'o', type: 'path' as const, description: 'The file to write (--output), a .jpg, .png, .webp or .avif; it must not be there yet' },
+  ],
+  examples: [
+    'file-crop /archive/scans/1952/portrait.tif --box 0.4,0.3,0.1,0.1 --width 1200 -o /tmp/eye.jpg',
+  ],
+  returns: 'The file written, its size, and the size of the picture as shown (frame)',
+};
+
+export default fileCrop;

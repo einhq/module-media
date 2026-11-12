@@ -118,3 +118,9 @@ export type Restoration = { steps: RestorationStep[]; at: string; marked?: numbe
  * `marks` the same in the picture's display frame, small enough for a page to lay over the original.
  */
 export type FileRestoreAnswer = { path: string; name: string; restoration: Restoration; mask?: string; marks?: string };
+
+/**
+ * `file-crop`: the file it wrote and that file's size in pixels, and `frame` the size of the
+ * picture it was cut from, as shown.
+ */
+export type FileCropAnswer = { path: string; width: number; height: number; frame: { width: number; height: number } };
