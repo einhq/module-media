@@ -20,7 +20,9 @@ import { reportUnwritable } from '@media/writable';
  *
  * With `--dust` the defect finder's mask is kept beside the copy, `mask.png` at full size, and
  * `marks.png` in the picture's display frame for a page to lay over the original: the finder
- * guesses, and marks some of a picture's own details as damage.
+ * guesses, and marks some of a picture's own details as damage. `--mask` fills a mask given instead
+ * of finding one — the finder's corrected by hand, or a blemish painted on any photo — and keeps it
+ * beside the copy the same way: a one-channel PNG of the picture as stored, nonzero where marked.
  *
  * EMS reads the picture as stored, so the version is too: it takes the file's turn (`angle`,
  * `mirror`) to be shown upright. A person waits for it, so the steps go ahead of batch work.
@@ -31,6 +33,22 @@ const RESTORABLE = new Set(['image/jpeg', 'image/png', 'image/tiff', 'image/webp
 
 const TEMP_PREFIX = '.tmprestore-';
 const MARKS_EDGE = 1600;
+
+/** The bytes of the file at `from` written into the one at `to`. */
+const copyContent = async (cmd: Command, from: string, to: string): Promise<void> => {
+  const source = await cmd.sys.vfs.open(cmd.access, from, { mode: 'r' });
+  try {
+    const target = await cmd.sys.vfs.open(cmd.access, to, { mode: 'w' });
+    try {
+      for await (const chunk of source.readable) await target.write(chunk);
+    } finally {
+      await target.close();
+    }
+  } finally {
+    await source.close();
+  }
+  await syncNonEmpty(cmd, to, 'copying the mask');
+};
 
 /** The first `restored-<n>.<ext>` not taken in `dir`. */
 const nextName = async (cmd: Command, dir: string, ext: string): Promise<string> => {
@@ -45,7 +63,7 @@ const fileRestore = async (cmd: Command): CmdReturn => {
   const unknown: string[] = [];
   const flags = parseArgs(cmd.args, {
     boolean: ['unfade', 'dust', 'dark', 'verbose'],
-    string: ['fill', 'grain'],
+    string: ['fill', 'grain', 'mask'],
     alias: { v: 'verbose' },
     unknown: collectUnknownFlags(unknown),
   });
@@ -59,10 +77,13 @@ const fileRestore = async (cmd: Command): CmdReturn => {
   if (!inputPath) return await fail('missing file path');
   const fill = flags.fill ?? 'ns';
   if (fill !== 'ns' && fill !== 'telea' && fill !== 'lama') return await fail(`--fill is ns, telea or lama, not ${fill}`);
-  if ((flags.dark || flags.fill !== undefined) && !flags.dust) return await fail('--dark and --fill go with --dust');
+  const given = flags.mask ? resolve(cmd.cwd, flags.mask) : undefined;
+  if (given && flags.dust) return await fail('--dust finds the marks and --mask gives them: name one');
+  if (flags.dark && !flags.dust) return await fail('--dark goes with --dust');
+  if (flags.fill !== undefined && !flags.dust && !given) return await fail('--fill goes with --dust or --mask');
   const grain = flags.grain === undefined ? undefined : Number(flags.grain);
   if (grain !== undefined && !(grain > 0 && grain <= 1)) return await fail(`--grain is a strength above 0 and at most 1, not ${flags.grain}`);
-  if (!flags.unfade && !flags.dust && grain === undefined) return await fail('nothing to do: name --unfade, --dust or --grain');
+  if (!flags.unfade && !flags.dust && !given && grain === undefined) return await fail('nothing to do: name --unfade, --dust, --mask or --grain');
 
   const node = await cmd.sys.vfs.get(cmd.access, inputPath).catch(() => undefined);
   if (!node) return await fail(`${inputPath}: file not found or unreadable`);
@@ -71,6 +92,11 @@ const fileRestore = async (cmd: Command): CmdReturn => {
   const mimetype = typeof node.attrs.mimetype === 'string' ? node.attrs.mimetype : '';
   if (!RESTORABLE.has(mimetype)) return await fail(`${inputPath}: ${mimetype || 'no mimetype'} cannot be restored; only JPEG, PNG, TIFF, WebP and BMP pictures`);
   if (await reportUnwritable(cmd, inputPath, node)) return 1;
+  if (given) {
+    const mask = await cmd.sys.vfs.get(cmd.access, given).catch(() => undefined);
+    if (!mask || mask.type !== 'file') return await fail(`${given}: no mask file there`);
+    if (!(Number(mask.attrs.size) > 0)) return await fail(`${given}: an empty file, not a mask`);
+  }
 
   const format = mimetype === 'image/tiff' ? 'tiff' : 'png';
   const ext = format === 'tiff' ? 'tif' : 'png';
@@ -95,7 +121,7 @@ const fileRestore = async (cmd: Command): CmdReturn => {
     return `${dir}/${name}`;
   };
 
-  const plan = [flags.unfade && 'unfade', flags.dust && 'dust', grain !== undefined && 'grain'].filter((step): step is string => Boolean(step));
+  const plan = [flags.unfade && 'unfade', (flags.dust || given) && 'dust', grain !== undefined && 'grain'].filter((step): step is string => Boolean(step));
   const steps: RestorationStep[] = [];
   let source = inputPath;
   let mask: string | undefined;
@@ -109,13 +135,18 @@ const fileRestore = async (cmd: Command): CmdReturn => {
         steps.push({ op: 'image.unfade', params: { levels: done.levels, gammas: done.gammas }, producer: done.producer });
       } else if (step === 'dust') {
         mask = await stage('mask.png', true);
-        const dark = Boolean(flags.dark);
-        const found = await findDefects(cmd, source, { output: mask, dark }, call);
-        await syncNonEmpty(cmd, mask, 'image.defects');
-        marked = found.fraction;
-        steps.push({ op: 'image.defects', params: { dark }, producer: found.producer });
+        if (given) {
+          await copyContent(cmd, given, mask);
+        } else {
+          const dark = Boolean(flags.dark);
+          const found = await findDefects(cmd, source, { output: mask, dark }, call);
+          await syncNonEmpty(cmd, mask, 'image.defects');
+          marked = found.fraction;
+          steps.push({ op: 'image.defects', params: { dark }, producer: found.producer });
+        }
         const done = await inpaint(cmd, source, { mask, output, format, method: fill }, call);
-        steps.push({ op: 'image.inpaint', params: { method: fill }, producer: done.producer });
+        if (given) marked = done.width * done.height > 0 ? done.filled / (done.width * done.height) : 0;
+        steps.push({ op: 'image.inpaint', params: { method: fill, ...(given ? { given: true } : {}) }, producer: done.producer });
       } else {
         const done = await denoise(cmd, source, { output, format, strength: grain }, call);
         steps.push({ op: 'image.denoise', params: { strength: grain }, producer: done.producer });
@@ -195,7 +226,13 @@ fileRestore.spec = {
     {
       name: 'fill',
       type: 'string' as const,
-      description: 'With --dust, how the damage is filled: ns (the default) or telea for dust and thin scratches, lama for creases and tears',
+      description: 'With --dust or --mask, how the damage is filled: ns (the default) or telea for dust and thin scratches, lama for creases and tears',
+    },
+    {
+      name: 'mask',
+      type: 'path' as const,
+      description:
+        'Fill what this mask marks instead of finding the damage: a one-channel PNG the size of the picture as stored, nonzero where marked. It is copied beside the version',
     },
     { name: 'grain', type: 'string' as const, description: 'Lessen grain and noise, at this strength (above 0, at most 1; 0.5 keeps about half the grain)' },
     { name: 'v', type: 'bool' as const, description: 'Say each step as it runs' },
@@ -203,8 +240,9 @@ fileRestore.spec = {
   examples: [
     'file-restore /archive/scans/1974/print-07.jpg --unfade --dust',
     'file-restore /archive/scans/1952/portrait.tif --dust --dark --fill lama --grain 0.5',
+    'file-restore /archive/scans/1974/print-07.jpg --unfade --mask /archive/scans/1974/print-07-mask.png',
   ],
-  returns: 'The version written, with the steps that made it and, with --dust, its mask and marks',
+  returns: 'The version written, with the steps that made it and, with --dust or --mask, its mask and marks',
 };
 
 export default fileRestore;

@@ -1,7 +1,8 @@
 /**
  * `file-restore`: the steps asked for run in order through EMS, each reading what the one before
- * wrote, and what is left is one frozen version beside the file, with the defect finder's mask and
- * marks under it and renditions of its own. The file is never written, and no temp stays behind.
+ * wrote, and what is left is one frozen version beside the file, with the mask filled (the defect
+ * finder's or one given) and its marks under it and renditions of its own. The file is never
+ * written, and no temp stays behind.
  */
 
 import { assert, assertEquals } from '@std/assert';
@@ -105,6 +106,23 @@ Deno.test({
       assertEquals(answer.restoration.marked, undefined);
     });
 
+    await t.step('a mask given is filled instead of one found, and kept beside the copy', async () => {
+      await client.exec('printf painted > /library/scans/painted.png');
+      calls.length = 0;
+      const answer = await restore('/library/scans/print.jpg --unfade --mask /library/scans/painted.png --fill lama');
+      const ops = calls.filter((c) => c.op !== 'image.renditions');
+      assertEquals(ops.map((c) => c.op), ['image.unfade', 'image.inpaint']);
+      assertEquals(ops[1].read, 'image.unfade of 1');
+      assertEquals(ops[1].body.method, 'lama');
+      assertEquals(answer.name, 'restored-3.png');
+      assertEquals(answer.restoration.steps[1].params, { method: 'lama', given: true });
+      assertEquals(answer.restoration.marked, 120 / (600 * 400));
+      assertEquals(answer.mask, `${answer.path}/mask.png`);
+      assertEquals((await client.exec(`cat ${answer.mask}`)).data, 'painted');
+      assert(await vfs.exists(ADMIN_ACCESS, '/library/scans/painted.png'));
+      assertEquals(calls.filter((c) => c.op === 'image.renditions').length, 2);
+    });
+
     await t.step('a TIFF is restored into a TIFF', async () => {
       await client.exec('mkfile /library/scans/master.tif');
       await vfs.update(ADMIN_ACCESS, '/library/scans/master.tif', { attrs: { mimetype: 'image/tiff' } });
@@ -117,11 +135,16 @@ Deno.test({
     await t.step('what is refused, before EMS is asked', async () => {
       await client.exec('mkfile /library/scans/phone.heic');
       await vfs.update(ADMIN_ACCESS, '/library/scans/phone.heic', { attrs: { mimetype: 'image/heic' } });
+      await client.exec('mkfile /library/scans/empty.png');
       calls.length = 0;
       for (
         const [args, message] of [
           ['/library/scans/print.jpg', 'nothing to do'],
-          ['/library/scans/print.jpg --dark', '--dark and --fill go with --dust'],
+          ['/library/scans/print.jpg --dark', '--dark goes with --dust'],
+          ['/library/scans/print.jpg --unfade --fill lama', '--fill goes with --dust or --mask'],
+          ['/library/scans/print.jpg --dust --mask /library/scans/painted.png', 'name one'],
+          ['/library/scans/print.jpg --mask /library/scans/nothing.png', 'no mask file there'],
+          ['/library/scans/print.jpg --mask /library/scans/empty.png', 'an empty file'],
           ['/library/scans/print.jpg --dust --fill paint', '--fill is ns, telea or lama'],
           ['/library/scans/print.jpg --grain 2', '--grain is a strength'],
           ['/library/scans/phone.heic --unfade', 'cannot be restored'],
@@ -141,7 +164,7 @@ Deno.test({
         const run = await client.exec(`CFG_EMS_URL=${failing.url} file-restore /library/scans/print.jpg --unfade`);
         assertErrorContains(run, 'cannot be decoded');
         const versions = (await vfs.children(ADMIN_ACCESS, '/library/scans/print.jpg/versions')).map((c) => c.name);
-        assertEquals(versions, ['restored-1.png', 'restored-2.png']);
+        assertEquals(versions, ['restored-1.png', 'restored-2.png', 'restored-3.png']);
       } finally {
         await failing.close();
       }

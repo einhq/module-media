@@ -107,13 +107,14 @@ export type RestorationStep = { op: string; params: Record<string, unknown>; pro
 
 /**
  * How a restored version was made, on the version as its `restoration` attr: the steps in the order
- * they ran, and when. `marked` is the share of the picture the defect finder marked, when it ran.
+ * they ran, and when. `marked` is the share of the picture marked as damage, by the defect finder or
+ * by the mask given; an `image.inpaint` step of a mask given says so in its params (`given`).
  */
 export type Restoration = { steps: RestorationStep[]; at: string; marked?: number };
 
 /**
  * `file-restore`: the version it wrote, `<file>/versions/<name>`, with the steps that made it;
- * `mask` the defect finder's full-size mask beside it and `marks` the same in the picture's display
- * frame, small enough for a page to lay over the original, when it ran.
+ * `mask` the full-size mask that was filled, the defect finder's or the one given, beside it and
+ * `marks` the same in the picture's display frame, small enough for a page to lay over the original.
  */
 export type FileRestoreAnswer = { path: string; name: string; restoration: Restoration; mask?: string; marks?: string };
