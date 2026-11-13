@@ -1,6 +1,6 @@
 {
   "name": "media",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "description": "Renditions of pictures, videos and recordings, and what describes a file, for any module: reading a file's metadata, the renditions the rendition table names (a document's first page and its PDF among them), picture vectors for search by what a picture shows, the fingerprints that find copies, the text read from pictures and documents, transcripts, the vectors of a file's texts, the heals that keep renditions, picture vectors, fingerprints, text, transcripts and text vectors current, the facts of a media file, and the media pool's workers, which take the kinds of work the modules' drop-ins name",
 
   "license": "MIT",
