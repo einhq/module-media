@@ -62,6 +62,7 @@ const DECODING = new Set(['media-embed-picture.yaml', 'media-fingerprint.yaml', 
 const UNGATED: Record<string, string> = {
   'media-ingest.yaml': 'reads the file, which every family needs',
   'media-reindex.yaml': 'reads the file again when its bytes change, which every family needs',
+  'media-restore.yaml': 'runs what someone asked for, wherever the picture is',
 };
 
 Deno.test('every trigger names its family, and a pipeline that decodes the source skips one nothing can decode', async () => {

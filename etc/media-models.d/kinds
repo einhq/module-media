@@ -8,3 +8,4 @@ embed-picture ops=vision.embed                      # picture vectors, for searc
 ocr ops=ocr.read,text.embed                         # the text written in a picture
 embed-text ops=text.embed                           # vectors of a file's texts
 transcribe ops=speech.transcribe,text.embed         # what is said in a video or recording
+restore ops=image.unfade,image.defects,image.inpaint,image.denoise,image.copy_tags,image.renditions  # restorations someone asked for, a version a picture

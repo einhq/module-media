@@ -77,3 +77,12 @@ export const TEXT_FACTS = {
    */
   textMissing: 'media.text.missing',
 } as const;
+
+/** The fact of a restoration asked for, which `media-restore` takes. */
+export const RESTORE_FACTS = {
+  /**
+   * Someone asked for a picture to be restored in the media pool: `file-restore --queue` wrote its
+   * `restoreRequest`. Only on the write that set it, and not for one that keeps why it failed.
+   */
+  requested: 'media.restore.requested',
+} as const;

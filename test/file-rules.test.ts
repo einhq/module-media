@@ -8,7 +8,7 @@ import { assertEquals } from '@std/assert';
 import { parse as parseYaml } from '@std/yaml';
 import type { DomainEvent } from '@ein/client';
 import { deriveFileEvents, FILE_FACTS, type FileRuleContext, HOLD_ATTR, isTextReadPath, LANE_ATTR, type NodeSnapshot, type VfsEventInput } from '@media/file-rules';
-import { TEXT_FACTS } from '@media/facts';
+import { RESTORE_FACTS, TEXT_FACTS } from '@media/facts';
 
 const LIBRARY = '/library/x';
 const IMG = `${LIBRARY}/a.jpg`;
@@ -167,6 +167,19 @@ Deno.test('a read picture whose text language is set by hand is announced; any o
   assertEquals(set(await deriveFileEvents(updated(['textIndexedAt', 'ocrBy']), picture({ ...read, ocrLanguageManual: 'en' }), 100)), []);
   // Its text never read: the reading it waits for asks in the language anyway.
   assertEquals(set(await deriveFileEvents(updated(['ocrLanguageManual']), picture({ ocrLanguageManual: 'en' }), 100)), []);
+});
+
+Deno.test('a restoration asked for is announced on the write that set it; a cleared or failed one is not', async () => {
+  const updated = (changedAttrs: string[]): VfsEventInput => ({ ...event('file', IMG, 'updated'), changedAttrs });
+  const requested = (facts: Omit<DomainEvent, 'id'>[]) => facts.filter((fact) => fact.type === RESTORE_FACTS.requested);
+  const picture = (restoreRequest?: unknown) => tree({ [IMG]: file('f1', restoreRequest ? { restoreRequest } : {}), [`${IMG}/metadata/exif`]: exif() });
+  const asked = { unfade: true, dust: false, dark: false, fill: 'ns', at: '2026-11-13T20:00:00Z' };
+
+  const facts = requested(await deriveFileEvents(updated(['restoreRequest']), picture(asked), 100));
+  assertEquals(facts.map((fact) => [fact.subject, fact.data]), [[IMG, { mimetype: 'image/jpeg', at: asked.at }]]);
+  assertEquals(requested(await deriveFileEvents(updated(['labels']), picture(asked), 100)), []);
+  assertEquals(requested(await deriveFileEvents(updated(['restoreRequest']), picture(), 100)), []);
+  assertEquals(requested(await deriveFileEvents(updated(['restoreRequest']), picture({ ...asked, failed: 'the file cannot be decoded' }), 100)), []);
 });
 
 Deno.test('a transcript gaining its transcribedAt reports the recording, once per transcription', async () => {

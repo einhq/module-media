@@ -38,7 +38,7 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
         reserve: ['stills', 'transcode', 'fingerprint'],
       });
       const text = await client.exec('media-pool-kinds models', { json: false });
-      assertEquals(String(text.data).trim(), '--kind shots --kind embed-picture --kind ocr --kind embed-text --kind transcribe');
+      assertEquals(String(text.data).trim(), '--kind shots --kind embed-picture --kind ocr --kind embed-text --kind transcribe --kind restore');
     });
 
     await t.step('the modules in name order, comments left out, a kind named twice once', async () => {
@@ -58,6 +58,7 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
     await t.step('the second models worker takes them the other way round', async () => {
       await writeKinds('media-models', 'archive', 'faces\ndiarize\n');
       assertEquals((await client.execJson<PoolKinds>('media-pool-kinds models --reverse')).kinds, [
+        'restore',
         'transcribe',
         'embed-text',
         'ocr',
@@ -99,7 +100,7 @@ Deno.test({ name: 'media-pool-kinds reads the modules drop-ins', sanitizeResourc
         assertEquals(kinds, '--kind faces --kind embed-picture --kind embed-text');
         assertEquals((await client.exec(`${env} media-pool-kinds models --instance laptop --expect='${kinds}'`, { json: false })).success, true);
         assertEquals((await client.exec(`${env} media-pool-kinds models --instance laptop --expect='--kind faces'`, { json: false })).success, false);
-        assertEquals((await client.execJson<PoolKinds>(`${env} media-pool-kinds models --instance main`)).kinds.length, 7);
+        assertEquals((await client.execJson<PoolKinds>(`${env} media-pool-kinds models --instance main`)).kinds.length, 8);
         await laptop.close();
         assertEquals(String((await client.exec(`${env} media-pool-kinds models --instance laptop`, { json: false })).data ?? '').trim(), '');
         assertEquals((await client.exec(`${env} media-pool-kinds models --instance desktop`, { json: false })).success, false);

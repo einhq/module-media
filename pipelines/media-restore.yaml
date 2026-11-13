@@ -1,0 +1,25 @@
+# Restore a picture someone asked to, in the media pool: `file-restore --queue` keeps the steps on
+# the picture as `restoreRequest`, whose write is this fact. ein/core#1200.
+#
+# On a kind of its own: a restoration holds the defect finder, LaMa and SCUNet on the card for
+# seconds to minutes a picture, and a selection of a few hundred scans must not starve the
+# archive's other model work, nor be starved by a crawl. Behind interactive work in EMS, since
+# nobody waits for it.
+name: media-restore
+description: Restore a picture someone asked to, into a version beside it
+
+trigger:
+  on: media.restore.requested
+
+steps:
+  file-restore:
+    command: file-restore --requested $NODE_PATH
+    description: The restoration asked for, into a version beside the picture
+    pool: media
+    kind: restore
+    requires:
+      models: 1
+
+options:
+  maxAttempts: 3
+  priority: 30

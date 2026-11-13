@@ -5,10 +5,10 @@
  * it and renditions of its own. The file is never written, and no temp stays behind.
  */
 
-import { assert, assertEquals } from '@std/assert';
+import { assert, assertEquals, assertStringIncludes } from '@std/assert';
 import { ADMIN_ACCESS, assertErrorContains, createTestContext } from '@ein/testing';
 import { startStubEms } from '@ems/testing';
-import type { FileRestoreAnswer } from '@media/api';
+import type { FileRestoreAnswer, FileRestoreQueueAnswer, RestoreRequest } from '@media/api';
 
 const fileRoot = await Deno.makeTempDir({ prefix: 'ein-file-restore-' });
 const testCtx = createTestContext({ modules: ['media'], fileRoot });
@@ -151,6 +151,54 @@ Deno.test({
       const answer = await restore('/library/scans/master.tif --unfade');
       assertEquals(calls[0].body.output?.format, 'tiff');
       assertEquals(answer.name, 'restored-1.tif');
+    });
+
+    await t.step('--queue keeps the steps on each picture the caller may edit, and asks EMS nothing', async () => {
+      await client.exec('printf other > /library/scans/other.jpg');
+      await vfs.update(ADMIN_ACCESS, '/library/scans/other.jpg', { attrs: { mimetype: 'image/jpeg' } });
+      calls.length = 0;
+      const answer = await client.execJson<FileRestoreQueueAnswer>(
+        `${env} JSON_OUTPUT=1 file-restore --queue --unfade --dust --grain 0.3 /library/scans/print.jpg /library/scans/other.jpg /library/scans/missing.jpg`,
+      );
+      assertEquals(answer.queued, ['/library/scans/print.jpg', '/library/scans/other.jpg']);
+      assertEquals(answer.refused.map((r) => r.path), ['/library/scans/missing.jpg']);
+      assertEquals(calls.length, 0);
+      const request = (await vfs.get(ADMIN_ACCESS, '/library/scans/other.jpg')).attrs.restoreRequest as RestoreRequest;
+      assertEquals({ ...request, at: '' }, { unfade: true, dust: true, dark: false, fill: 'ns', grain: 0.3, at: '' });
+      assertErrorContains(await client.exec(`${env} file-restore --queue --mask /library/scans/painted.png /library/scans/print.jpg`), 'restore it alone');
+      assertErrorContains(await client.exec(`${env} file-restore --queue /library/scans/print.jpg`), 'nothing to do');
+    });
+
+    await t.step('--requested runs the steps kept, behind interactive work, and clears the request', async () => {
+      calls.length = 0;
+      const answer = await restore('--requested /library/scans/other.jpg');
+      assertEquals(restoring().map((c) => c.op), ['image.unfade', 'image.defects', 'image.inpaint', 'image.denoise']);
+      assertEquals(restoring().map((c) => (c.body.options as { priority?: string } | undefined)?.priority), [undefined, undefined, undefined, undefined]);
+      assertEquals(restoring()[3].body.strength, 0.3);
+      assertEquals(answer.path, '/library/scans/other.jpg/versions/restored-1.png');
+      assertEquals((await vfs.get(ADMIN_ACCESS, '/library/scans/other.jpg')).attrs.restoreRequest, undefined);
+      // Nothing asked: nothing done.
+      calls.length = 0;
+      assertEquals((await client.exec(`${env} file-restore --requested /library/scans/other.jpg`)).success, true);
+      assertEquals(calls.length, 0);
+    });
+
+    await t.step('a queued restoration EMS refuses keeps why, and is not run again', async () => {
+      const failing = startStubEms({
+        ops: { 'image.unfade': { error: { code: 'undecodable', message: 'the file cannot be decoded', permanent: true }, status: 422 } },
+      });
+      try {
+        const run = await client.exec(`CFG_EMS_URL=${failing.url} file-restore --requested /library/scans/print.jpg`);
+        assertEquals(run.success, false);
+        const request = (await vfs.get(ADMIN_ACCESS, '/library/scans/print.jpg')).attrs.restoreRequest as RestoreRequest;
+        assertEquals(request.unfade, true);
+        assertStringIncludes(request.failed ?? '', 'cannot be decoded');
+        calls.length = 0;
+        assertEquals((await client.exec(`${env} file-restore --requested /library/scans/print.jpg`)).success, true);
+        assertEquals(calls.length, 0);
+      } finally {
+        await failing.close();
+      }
     });
 
     await t.step('what is refused, before EMS is asked', async () => {

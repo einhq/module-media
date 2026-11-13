@@ -1,14 +1,14 @@
 #!ts
 import { basename, resolve } from '@std/path';
 import type { CmdReturn, Command } from '@ein/client';
-import { collectUnknownFlags, parseArgs, readRenditionTable, reportUnknownFlags, shq } from '@ein/client';
+import { collectUnknownFlags, type Node, parseArgs, readRenditionTable, reportUnknownFlags, shq, STEP_EXIT_TEMPORARY, verifyAccess } from '@ein/client';
 import { imageFileName, imageRolesOf } from '@ein/api';
-import { copyTags, denoise, findDefects, inpaint, type PictureEdit, renditions, type RestoreCallOptions, unfade } from '@ems/client';
-import type { FileRestoreAnswer, Restoration, RestorationStep } from '@media/api';
+import { copyTags, denoise, findDefects, inpaint, type PictureEdit, renditions, type RestoreCallOptions, stepExitCode, unfade } from '@ems/client';
+import type { FileRestoreAnswer, FileRestoreQueueAnswer, Restoration, RestorationStep, RestoreRequest } from '@media/api';
+import { RESTORABLE } from '@media/damage';
 import { generateImageLadder } from '@media/image-ladder';
 import { normalizeAngle, normalizeMirror, pictureDims } from '@media/orientation';
 import { removeNode, sweepStaleTemps, syncNonEmpty } from '@media/staged-output';
-import { reportUnwritable } from '@media/writable';
 
 /**
  * Restore a photo: a copy of it with faded colours brought back (`--unfade`, EMS `image.unfade`),
@@ -31,10 +31,13 @@ import { reportUnwritable } from '@media/writable';
  * EMS reads the picture as stored, so the version is too: it takes the file's turn (`angle`,
  * `mirror`) to be shown upright, and carries it as its EXIF orientation. A person waits for it, so
  * the steps go ahead of batch work.
+ *
+ * `--queue` restores any number of pictures in the media pool instead, nobody waiting: it keeps the
+ * steps on each picture the caller may edit as `restoreRequest`, whose write starts `media-restore`,
+ * which runs `--requested` on it: the steps kept, behind interactive work, and the request cleared
+ * once the version is written. A request that fails for another reason than EMS's moment keeps
+ * `failed`, the reason, and is not run again until it is asked for anew.
  */
-
-/** The pictures EMS's restoration ops read (OpenCV): not RAW, HEIF or AVIF. */
-const RESTORABLE = new Set(['image/jpeg', 'image/png', 'image/tiff', 'image/webp', 'image/bmp']);
 
 const TEMP_PREFIX = '.tmprestore-';
 const MARKS_EDGE = 1600;
@@ -64,53 +67,49 @@ const nextName = async (cmd: Command, dir: string, ext: string): Promise<string>
   }
 };
 
-const fileRestore = async (cmd: Command): CmdReturn => {
-  const unknown: string[] = [];
-  const flags = parseArgs(cmd.args, {
-    boolean: ['unfade', 'dust', 'dark', 'verbose'],
-    string: ['fill', 'grain', 'mask'],
-    alias: { v: 'verbose' },
-    unknown: collectUnknownFlags(unknown),
-  });
-  if (await reportUnknownFlags(cmd, unknown)) return 1;
-  const fail = async (message: string): Promise<number> => {
-    await cmd.writeError(`file-restore: ${message}\n`);
-    return 1;
+/** The steps a restoration runs, from the flags or from a queued request. */
+type Steps = { unfade: boolean; dust: boolean; dark: boolean; fill: 'ns' | 'telea' | 'lama'; grain?: number; mask?: string };
+
+/** The steps asked for, or why they cannot run. */
+const stepsOf = (asked: { unfade?: unknown; dust?: unknown; dark?: unknown; fill?: unknown; grain?: unknown; mask?: string }): Steps | string => {
+  const fill = asked.fill ?? 'ns';
+  if (fill !== 'ns' && fill !== 'telea' && fill !== 'lama') return `--fill is ns, telea or lama, not ${fill}`;
+  if (asked.mask && asked.dust) return '--dust finds the marks and --mask gives them: name one';
+  if (asked.dark && !asked.dust) return '--dark goes with --dust';
+  if (asked.fill !== undefined && !asked.dust && !asked.mask) return '--fill goes with --dust or --mask';
+  const grain = asked.grain === undefined ? undefined : Number(asked.grain);
+  if (grain !== undefined && !(grain > 0 && grain <= 1)) return `--grain is a strength above 0 and at most 1, not ${asked.grain}`;
+  if (!asked.unfade && !asked.dust && !asked.mask && grain === undefined) return 'nothing to do: name --unfade, --dust, --mask or --grain';
+  return {
+    unfade: Boolean(asked.unfade),
+    dust: Boolean(asked.dust),
+    dark: Boolean(asked.dark),
+    fill,
+    ...(grain !== undefined ? { grain } : {}),
+    ...(asked.mask ? { mask: asked.mask } : {}),
   };
+};
 
-  const inputPath = flags._.length > 0 ? resolve(cmd.cwd, String(flags._[0])) : '';
-  if (!inputPath) return await fail('missing file path');
-  const fill = flags.fill ?? 'ns';
-  if (fill !== 'ns' && fill !== 'telea' && fill !== 'lama') return await fail(`--fill is ns, telea or lama, not ${fill}`);
-  const given = flags.mask ? resolve(cmd.cwd, flags.mask) : undefined;
-  if (given && flags.dust) return await fail('--dust finds the marks and --mask gives them: name one');
-  if (flags.dark && !flags.dust) return await fail('--dark goes with --dust');
-  if (flags.fill !== undefined && !flags.dust && !given) return await fail('--fill goes with --dust or --mask');
-  const grain = flags.grain === undefined ? undefined : Number(flags.grain);
-  if (grain !== undefined && !(grain > 0 && grain <= 1)) return await fail(`--grain is a strength above 0 and at most 1, not ${flags.grain}`);
-  if (!flags.unfade && !flags.dust && !given && grain === undefined) return await fail('nothing to do: name --unfade, --dust, --mask or --grain');
-
-  const node = await cmd.sys.vfs.get(cmd.access, inputPath).catch(() => undefined);
-  if (!node) return await fail(`${inputPath}: file not found or unreadable`);
-  if (node.type !== 'file') return await fail(`${inputPath}: not a file node (is ${node.type})`);
-  if (node.attrs.sourceId) return await fail(`${inputPath}: a rendition or version; restore the file it belongs to`);
+/** The picture at `path`, or why the caller cannot restore it. */
+const restorable = async (cmd: Command, path: string): Promise<Node | string> => {
+  const node = await cmd.sys.vfs.get(cmd.access, path).catch(() => undefined);
+  if (!node) return `${path}: file not found or unreadable`;
+  if (node.type !== 'file') return `${path}: not a file node (is ${node.type})`;
+  if (node.attrs.sourceId) return `${path}: a rendition or version; restore the file it belongs to`;
   const mimetype = typeof node.attrs.mimetype === 'string' ? node.attrs.mimetype : '';
-  if (!RESTORABLE.has(mimetype)) return await fail(`${inputPath}: ${mimetype || 'no mimetype'} cannot be restored; only JPEG, PNG, TIFF, WebP and BMP pictures`);
-  if (await reportUnwritable(cmd, inputPath, node)) return 1;
-  if (given) {
-    const mask = await cmd.sys.vfs.get(cmd.access, given).catch(() => undefined);
-    if (!mask || mask.type !== 'file') return await fail(`${given}: no mask file there`);
-    if (!(Number(mask.attrs.size) > 0)) return await fail(`${given}: an empty file, not a mask`);
-  }
+  if (!RESTORABLE.has(mimetype)) return `${path}: ${mimetype || 'no mimetype'} cannot be restored; only JPEG, PNG, TIFF, WebP and BMP pictures`;
+  // Asked before EMS is, so a refused write never spends its work (ein/core#535).
+  if (!verifyAccess(cmd.access, node.props, 'w')) return `${path}: permission denied`;
+  return node;
+};
 
-  const format = mimetype === 'image/tiff' ? 'tiff' : 'png';
+/** The steps run over the picture `node` at `inputPath` into a new version beside it; what was written. */
+const restoreFile = async (cmd: Command, inputPath: string, node: Node, steps: Steps, call: RestoreCallOptions, verbose: boolean): Promise<FileRestoreAnswer> => {
+  const { fill, grain, mask: given } = steps;
+  const format = node.attrs.mimetype === 'image/tiff' ? 'tiff' : 'png';
   const ext = format === 'tiff' ? 'tif' : 'png';
   const angle = normalizeAngle(node.attrs.angle);
   const mirror = normalizeMirror(node.attrs.mirror);
-  const call: RestoreCallOptions = {
-    interactive: true,
-    ...(flags.verbose ? { onProgress: async (phase: string) => await cmd.writeLn(`  ${phase}`) } : {}),
-  };
 
   await cmd.sys.vfs.ensure(cmd.access, 'directory', inputPath, 'versions', { props: { mode: 0o770 } });
   const dir = `${inputPath}/versions`;
@@ -126,8 +125,8 @@ const fileRestore = async (cmd: Command): CmdReturn => {
     return `${dir}/${name}`;
   };
 
-  const plan = [flags.unfade && 'unfade', (flags.dust || given) && 'dust', grain !== undefined && 'grain'].filter((step): step is string => Boolean(step));
-  const steps: RestorationStep[] = [];
+  const plan = [steps.unfade && 'unfade', (steps.dust || given) && 'dust', grain !== undefined && 'grain'].filter((step): step is string => Boolean(step));
+  const done: RestorationStep[] = [];
   let source = inputPath;
   let mask: string | undefined;
   let marked: number | undefined;
@@ -135,41 +134,41 @@ const fileRestore = async (cmd: Command): CmdReturn => {
     for (const step of plan) {
       const output = await stage(`${step}.${ext}`, false);
       if (step === 'unfade') {
-        const done = await unfade(cmd, source, { output, format }, call);
-        steps.push({ op: 'image.unfade', params: { levels: done.levels, gammas: done.gammas }, producer: done.producer });
+        const made = await unfade(cmd, source, { output, format }, call);
+        done.push({ op: 'image.unfade', params: { levels: made.levels, gammas: made.gammas }, producer: made.producer });
       } else if (step === 'dust') {
         mask = await stage('mask.png', true);
         if (given) {
           await copyContent(cmd, given, mask);
         } else {
-          const dark = Boolean(flags.dark);
+          const dark = Boolean(steps.dark);
           const found = await findDefects(cmd, source, { output: mask, dark }, call);
           await syncNonEmpty(cmd, mask, 'image.defects');
           marked = found.fraction;
-          steps.push({ op: 'image.defects', params: { dark }, producer: found.producer });
+          done.push({ op: 'image.defects', params: { dark }, producer: found.producer });
         }
-        const done = await inpaint(cmd, source, { mask, output, format, method: fill }, call);
-        if (given) marked = done.width * done.height > 0 ? done.filled / (done.width * done.height) : 0;
-        steps.push({ op: 'image.inpaint', params: { method: fill, ...(given ? { given: true } : {}) }, producer: done.producer });
+        const made = await inpaint(cmd, source, { mask, output, format, method: fill }, call);
+        if (given) marked = made.width * made.height > 0 ? made.filled / (made.width * made.height) : 0;
+        done.push({ op: 'image.inpaint', params: { method: fill, ...(given ? { given: true } : {}) }, producer: made.producer });
       } else {
-        const done = await denoise(cmd, source, { output, format, strength: grain }, call);
-        steps.push({ op: 'image.denoise', params: { strength: grain }, producer: done.producer });
+        const made = await denoise(cmd, source, { output, format, strength: grain }, call);
+        done.push({ op: 'image.denoise', params: { strength: grain }, producer: made.producer });
       }
-      await syncNonEmpty(cmd, output, steps[steps.length - 1].op);
-      if (flags.verbose) await cmd.writeLn(`${steps[steps.length - 1].op} done`);
+      await syncNonEmpty(cmd, output, done[done.length - 1].op);
+      if (verbose) await cmd.writeLn(`${done[done.length - 1].op} done`);
       source = output;
     }
 
     const at = new Date().toISOString();
     const tagged = await stage(`tags.${ext}`, true);
-    const history: PictureEdit[] = steps.map((step) => ({
+    const history: PictureEdit[] = done.map((step) => ({
       action: 'edited',
       when: at,
       softwareAgent: step.producer,
       parameters: `${step.op} ${JSON.stringify(step.params)}`,
       changed: '/',
     }));
-    const generative = steps.some((step) => step.op === 'image.inpaint' && step.params.method === 'lama');
+    const generative = done.some((step) => step.op === 'image.inpaint' && step.params.method === 'lama');
     await copyTags(cmd, source, {
       source: inputPath,
       output: tagged,
@@ -185,7 +184,7 @@ const fileRestore = async (cmd: Command): CmdReturn => {
     const path = `${dir}/${name}`;
     await cmd.sys.vfs.rename(cmd.access, dir, basename(source), dir, name, { failIfExists: true });
     temps.splice(temps.indexOf(source), 1);
-    const restoration: Restoration = { steps, at, ...(marked !== undefined ? { marked } : {}) };
+    const restoration: Restoration = { steps: done, at, ...(marked !== undefined ? { marked } : {}) };
     const { width, height } = node.attrs;
     await cmd.sys.vfs.update(cmd.access, path, {
       attrs: { sourceId: node.id, frozen: true, restoration, angle, mirror, ...(width ? { width } : {}), ...(height ? { height } : {}) },
@@ -229,13 +228,111 @@ const fileRestore = async (cmd: Command): CmdReturn => {
       }),
     );
 
-    if (cmd.json) await cmd.writeJSON(answer);
-    else await cmd.writeLn(`${path}: ${steps.map((step) => step.op).join(', ')}`);
-    return 0;
-  } catch (error) {
-    return await fail(`${inputPath}: ${error instanceof Error ? error.message : String(error)}`);
+    return answer;
   } finally {
     for (const temp of temps) await removeNode(cmd, temp, dir);
+  }
+};
+
+/** Each picture's steps kept as its `restoreRequest`, for `media-restore` to run. */
+const queue = async (cmd: Command, paths: string[], steps: Steps): Promise<FileRestoreQueueAnswer> => {
+  const { mask: _, grain, ...rest } = steps;
+  const request: RestoreRequest = { ...rest, ...(grain !== undefined ? { grain } : {}), at: new Date().toISOString() };
+  const answer: FileRestoreQueueAnswer = { queued: [], refused: [] };
+  for (const path of paths) {
+    const node = await restorable(cmd, path);
+    if (typeof node === 'string') {
+      answer.refused.push({ path, reason: node });
+      continue;
+    }
+    try {
+      await cmd.sys.vfs.update(cmd.access, path, { attrs: { restoreRequest: request } });
+      answer.queued.push(path);
+    } catch (error) {
+      answer.refused.push({ path, reason: `${path}: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  }
+  return answer;
+};
+
+const fileRestore = async (cmd: Command): CmdReturn => {
+  const unknown: string[] = [];
+  const flags = parseArgs(cmd.args, {
+    boolean: ['unfade', 'dust', 'dark', 'verbose', 'queue', 'requested'],
+    string: ['fill', 'grain', 'mask'],
+    alias: { v: 'verbose' },
+    unknown: collectUnknownFlags(unknown),
+  });
+  if (await reportUnknownFlags(cmd, unknown)) return 1;
+  const fail = async (message: string): Promise<number> => {
+    await cmd.writeError(`file-restore: ${message}\n`);
+    return 1;
+  };
+  const verbose = Boolean(flags.verbose);
+  const paths = flags._.map((arg) => resolve(cmd.cwd, String(arg)));
+  if (paths.length === 0) return await fail('missing file path');
+  if (flags.queue && flags.requested) return await fail('--queue asks and --requested runs what was asked: name one');
+
+  if (flags.requested) {
+    if (paths.length > 1) return await fail('--requested runs one picture');
+    const node = await restorable(cmd, paths[0]);
+    if (typeof node === 'string') return await fail(node);
+    const request = node.attrs.restoreRequest as RestoreRequest | null | undefined;
+    if (!request || typeof request !== 'object' || request.failed) {
+      if (verbose) await cmd.writeLn(`${paths[0]}: no restoration asked for`);
+      return 0;
+    }
+    const steps = stepsOf(request);
+    try {
+      if (typeof steps === 'string') throw new Error(steps);
+      const answer = await restoreFile(cmd, paths[0], node, steps, verbose ? { onProgress: async (phase) => await cmd.writeLn(`  ${phase}`) } : {}, verbose);
+      // Only the request this run answered: one asked anew meanwhile is left for its own run.
+      const now = (await cmd.sys.vfs.get(cmd.access, paths[0])).attrs.restoreRequest as RestoreRequest | null | undefined;
+      if (now?.at === request.at) await cmd.sys.vfs.update(cmd.access, paths[0], { attrs: { restoreRequest: null } });
+      if (cmd.json) await cmd.writeJSON(answer);
+      else await cmd.writeLn(`${answer.path}: ${answer.restoration.steps.map((step) => step.op).join(', ')}`);
+      return 0;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = stepExitCode(error);
+      if (code !== STEP_EXIT_TEMPORARY) await cmd.sys.vfs.update(cmd.access, paths[0], { attrs: { restoreRequest: { ...request, failed: message } } });
+      await fail(`${paths[0]}: ${message}`);
+      return code;
+    }
+  }
+
+  const given = flags.mask ? resolve(cmd.cwd, flags.mask) : undefined;
+  if (flags.queue && given) return await fail('--mask fills one picture, and --queue restores them as a set: restore it alone');
+  const steps = stepsOf({ unfade: flags.unfade, dust: flags.dust, dark: flags.dark, fill: flags.fill, grain: flags.grain, mask: given });
+  if (typeof steps === 'string') return await fail(steps);
+
+  if (flags.queue) {
+    const answer = await queue(cmd, paths, steps);
+    if (cmd.json) await cmd.writeJSON(answer);
+    else {
+      for (const { reason } of answer.refused) await cmd.writeError(`file-restore: ${reason}\n`);
+      await cmd.writeLn(`${answer.queued.length} queued to restore`);
+    }
+    // A page reads the refusals from the answer; a shell is told by the exit too.
+    return answer.queued.length > 0 || cmd.json ? 0 : 1;
+  }
+
+  if (paths.length > 1) return await fail('one picture at a time, or --queue for several');
+  const node = await restorable(cmd, paths[0]);
+  if (typeof node === 'string') return await fail(node);
+  if (given) {
+    const mask = await cmd.sys.vfs.get(cmd.access, given).catch(() => undefined);
+    if (!mask || mask.type !== 'file') return await fail(`${given}: no mask file there`);
+    if (!(Number(mask.attrs.size) > 0)) return await fail(`${given}: an empty file, not a mask`);
+  }
+  try {
+    const call: RestoreCallOptions = { interactive: true, ...(verbose ? { onProgress: async (phase: string) => await cmd.writeLn(`  ${phase}`) } : {}) };
+    const answer = await restoreFile(cmd, paths[0], node, steps, call, verbose);
+    if (cmd.json) await cmd.writeJSON(answer);
+    else await cmd.writeLn(`${answer.path}: ${answer.restoration.steps.map((step) => step.op).join(', ')}`);
+    return 0;
+  } catch (error) {
+    return await fail(`${paths[0]}: ${error instanceof Error ? error.message : String(error)}`);
   }
 };
 
@@ -243,7 +340,7 @@ fileRestore.spec = {
   name: 'file-restore',
   effect: 'write' as const,
   description: 'Restore a photo into a new version beside it: faded colours back, dust and scratches filled, grain lessened',
-  args: [{ name: 'file', type: 'path' as const, description: 'The picture to restore (JPEG, PNG, TIFF, WebP or BMP); it is never written' }],
+  args: [{ name: 'file', type: 'path' as const, description: 'The picture to restore (JPEG, PNG, TIFF, WebP or BMP), or with --queue any number; it is never written' }],
   flags: [
     { name: 'unfade', type: 'bool' as const, description: 'Give a faded colour print its colours back: each channel stretched, the neutral tones made grey' },
     { name: 'dust', type: 'bool' as const, description: 'Find dust, scratches and cracks and fill them from what surrounds them' },
@@ -260,14 +357,21 @@ fileRestore.spec = {
         'Fill what this mask marks instead of finding the damage: a one-channel PNG the size of the picture as stored, nonzero where marked. It is copied beside the version',
     },
     { name: 'grain', type: 'string' as const, description: 'Lessen grain and noise, at this strength (above 0, at most 1; 0.5 keeps about half the grain)' },
+    {
+      name: 'queue',
+      type: 'bool' as const,
+      description: 'Restore the pictures named in the media pool, nobody waiting: each gets its steps as restoreRequest, and a version when its turn comes',
+    },
+    { name: 'requested', type: 'bool' as const, description: "Run the steps a picture's restoreRequest asks for, and clear it (what the media pool runs)" },
     { name: 'v', type: 'bool' as const, description: 'Say each step as it runs' },
   ],
   examples: [
     'file-restore /archive/scans/1974/print-07.jpg --unfade --dust',
     'file-restore /archive/scans/1952/portrait.tif --dust --dark --fill lama --grain 0.5',
     'file-restore /archive/scans/1974/print-07.jpg --unfade --mask /archive/scans/1974/print-07-mask.png',
+    'file-restore --queue --unfade --dust /archive/scans/1974/*.jpg',
   ],
-  returns: 'The version written, with the steps that made it and, with --dust or --mask, its mask and marks',
+  returns: 'The version written, with the steps that made it and, with --dust or --mask, its mask and marks; with --queue the pictures queued and those refused, and why',
 };
 
 export default fileRestore;

@@ -16,7 +16,7 @@
 
 import type { DomainEvent } from '@ein/client';
 import { DEV_PATH, ETC_PATH, isTrashPath, TEMP_PATH, USR_PATH, VAR_PATH } from '@ein/paths';
-import { RENDITION_FACTS, TEXT_FACTS } from '@media/facts';
+import { RENDITION_FACTS, RESTORE_FACTS, TEXT_FACTS } from '@media/facts';
 import { RENDITIONS_AT_ATTR, RENDITIONS_FOR_ATTR } from '@media/rendition-marker';
 
 /** Who announced a fact derived here. */
@@ -330,6 +330,21 @@ function deriveTextLanguageSet(event: VfsEventInput, file: NodeSnapshot, now: nu
   }];
 }
 
+/** The fact a restoration asked for reveals (`restoreRequest`). Only on the write that set it. */
+function deriveRestoreRequested(event: VfsEventInput, file: NodeSnapshot, now: number): Omit<DomainEvent, 'id'>[] {
+  if (event.type !== 'updated' || !(event.changedAttrs ?? []).includes('restoreRequest')) return [];
+  const request = file.attrs.restoreRequest as { at?: unknown; failed?: unknown } | null | undefined;
+  if (!request || typeof request !== 'object' || request.failed) return [];
+  return [{
+    type: RESTORE_FACTS.requested,
+    subject: event.path,
+    nodeId: file.id,
+    time: now,
+    source: SOURCE,
+    data: { mimetype: str(file.attrs.mimetype) ?? '', at: str(request.at) ?? '' },
+  }];
+}
+
 /**
  * `<file>/metadata/transcript` gaining its `transcribedAt`: a transcript finished. transcribe-file
  * writes the cues first and the attrs with `transcribedAt` after, anew on every run, so this fires
@@ -457,6 +472,7 @@ const factsOf = async (event: VfsEventInput, ctx: FileRuleContext, now: number):
     ...await deriveFileTurned(event, file, ctx, now),
     ...deriveRenditionsMade(event, file, now),
     ...deriveTextLanguageSet(event, file, now),
+    ...deriveRestoreRequested(event, file, now),
     ...deriveDescriptionSet(event, file, now),
   ];
 };
