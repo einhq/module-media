@@ -22,7 +22,9 @@ import { TEXT_FACTS } from '@media/facts';
 /** Where the files under test live: any folder that wants everything. */
 const LIBRARY = '/library';
 
-const DECODE = 'whisper-large-v3:vad=0.2/800/2000,nospeech=0.8,lang=auto,words=0';
+const DECODE = 'whisper-large-v3:vad=0.2/800/2000,nospeech=0.8,on=cuda:float16,lang=auto,words=0';
+/** The same settings on the CPU, where EMS decodes when its card's share cannot hold whisper. */
+const ON_CPU = 'whisper-large-v3:vad=0.2/800/2000,nospeech=0.8,on=cpu:int8,lang=auto,words=0';
 const OLD_DECODE = 'whisper-large-v3:vad=0.5/400/500,nospeech=1.0,lang=auto,words=0';
 const PPOCR = 'PP-OCRv6_medium';
 const BGE = 'bge-m3';
@@ -33,7 +35,7 @@ const testCtx = createTestContext({ modules: ['media'] });
 Deno.test({ name: 'text-scan announces the text gaps by their markers', sanitizeResources: false, sanitizeOps: false }, async (t) => {
   const { vfs } = await testCtx.setup();
   const client = await testCtx.server.createShellClient();
-  const capabilities = { models: { ocr: PPOCR, text_embed: BGE }, signatures: { transcribe: DECODE } };
+  const capabilities = { models: { ocr: PPOCR, text_embed: BGE }, signatures: { transcribe: DECODE, transcribe_places: [DECODE, ON_CPU] } };
   const stub = startStubEms({
     capabilities,
     ops: {
@@ -67,6 +69,7 @@ Deno.test({ name: 'text-scan announces the text gaps by their markers', sanitize
     const done = { textVectorsBy: BGE };
     // Transcripts.
     await write(`${dir}/current.mp4`, { mimetype: 'video/mp4', transcriptWith: DECODE, ...done });
+    await write(`${dir}/on-the-cpu.mp4`, { mimetype: 'video/mp4', transcriptWith: ON_CPU, ...done });
     await write(`${dir}/old.mp4`, { mimetype: 'video/mp4', transcriptWith: OLD_DECODE, ...done });
     await write(`${dir}/kept.m4a`, { mimetype: 'audio/mp4', transcriptWith: 'kept', ...done });
     await write(`${dir}/never.m4a`, { mimetype: 'audio/mp4', ...done });
@@ -138,6 +141,11 @@ Deno.test({ name: 'text-scan announces the text gaps by their markers', sanitize
       await transcript(`${dir}/never.m4a`, { transcribedWith: DECODE });
       assertEquals((await client.exec(`${env} transcribe-file ${dir}/never.m4a`)).success, true);
       assertEquals([transcribed(), await marker(`${dir}/never.m4a`)], [0, DECODE]);
+
+      // Made on the CPU while the card's share left whisper no room there: as current.
+      await transcript(`${dir}/on-the-cpu.mp4`, { transcribedWith: ON_CPU });
+      assertEquals((await client.exec(`${env} transcribe-file ${dir}/on-the-cpu.mp4`)).success, true);
+      assertEquals([transcribed(), await marker(`${dir}/on-the-cpu.mp4`)], [0, ON_CPU]);
 
       // No sound: kept whatever the settings.
       await transcript(`${dir}/kept.m4a`, { transcribedBy: null, transcribedWith: null });

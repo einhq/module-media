@@ -97,7 +97,9 @@ starts: a pass before the module's pipelines are set up would match its facts ag
 definitions they replace. The scan announces, in the bulk lane:
 
 - `media.transcript.stale` for a video or a recording whose `transcriptWith` is missing or names
-  other settings than EMS runs now (`generations().transcribe`) and is not `kept`.
+  other settings than EMS runs now and is not `kept`. Where EMS decodes, on the card or on the CPU
+  as its card's share decides, is not a setting here: a transcript made in either place is current
+  (`generations().transcribeCurrent`), so moving the share transcribes nothing again.
   `media-transcribe` runs `transcribe-file` without `-f`, which keeps a finished transcript made
   with the settings in force, or with none to compare while EMS cannot say, marking the file, and
   transcribes the rest. `CFG_MEDIA_TRANSCRIPTS_CURRENT=off` leaves existing transcripts alone: the

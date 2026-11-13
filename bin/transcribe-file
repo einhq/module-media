@@ -158,9 +158,10 @@ const transcribeFile = async (cmd: Command): CmdReturn => {
     if (typeof transcriptAttrs.transcribedBy !== 'string' || !madeWith) keep = 'No sound to transcribe';
     else if (cmd.env.CFG_MEDIA_TRANSCRIPTS_CURRENT === 'off') keep = 'Already transcribed, and transcripts are not kept current';
     else {
-      const now = (await generations(cmd))?.transcribe ?? undefined;
-      if (now === undefined) keep = 'Already transcribed, and EMS cannot say with what settings it transcribes now';
-      else if (now === madeWith) keep = 'Already transcribed with the settings EMS runs now';
+      // Where EMS decodes is its card's share's, not a setting: either place counts.
+      const current = (await generations(cmd))?.transcribeCurrent ?? [];
+      if (current.length === 0) keep = 'Already transcribed, and EMS cannot say with what settings it transcribes now';
+      else if (current.includes(madeWith)) keep = 'Already transcribed with the settings EMS runs now';
       else if (verbose) await cmd.writeLn('Transcribed with other settings than EMS runs now: transcribing again');
     }
   }

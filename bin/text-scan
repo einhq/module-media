@@ -7,7 +7,9 @@
  * tree under the path (`/` unless one is given), and announced as the fact its pipeline takes:
  *
  * - `media.transcript.stale`: a video or a recording whose `transcriptWith` (`@media/text-markers`)
- *   is missing, or names other decode settings than EMS runs now and is not `kept`.
+ *   is missing, or names other decode settings than EMS runs now and is not `kept`. Where EMS
+ *   decodes, which its card's share decides, is no other setting: a transcript made on the card or
+ *   on the CPU is current either way (`transcribeCurrent`).
  *   `media-transcribe` runs `transcribe-file`, which keeps a transcript made with the settings in
  *   force, marking the file, and transcribes the rest. `CFG_MEDIA_TRANSCRIPTS_CURRENT=off` leaves
  *   the transcripts there are alone: only a file with no marker is announced, and kept as it is.
@@ -73,6 +75,7 @@ const textScan = async (cmd: Command): CmdReturn => {
   const transcriptsOff = cmd.env.CFG_MEDIA_TRANSCRIPTS_CURRENT === 'off';
   const now = await generations(cmd);
   const transcribe = now?.transcribe ?? undefined;
+  const current = now?.transcribeCurrent ?? [];
   const ocr = now?.ocr ?? undefined;
   const textEmbed = now?.textEmbed && textEmbeddingType(now.textEmbed) ? now.textEmbed : undefined;
 
@@ -89,7 +92,7 @@ const textScan = async (cmd: Command): CmdReturn => {
         ? ['audio/', 'video/'].map((kind) => ({
           where: transcriptsOff
             ? [prefix(kind), { ref: TRANSCRIPT_WITH_ATTR, op: 'missing' }]
-            : [prefix(kind), { ref: TRANSCRIPT_WITH_ATTR, op: 'ne', value: transcribe! }, { ref: TRANSCRIPT_WITH_ATTR, op: 'ne', value: TRANSCRIPT_KEPT }],
+            : [prefix(kind), ...[...current, TRANSCRIPT_KEPT].map((value): AttrCondition => ({ ref: TRANSCRIPT_WITH_ATTR, op: 'ne', value }))],
           data: (attrs) => ({ transcriptWith: named(attrs, TRANSCRIPT_WITH_ATTR), ...(transcribe && !transcriptsOff ? { expected: transcribe } : {}) }),
         }))
         : undefined,
