@@ -5,11 +5,12 @@
  * `generate-derivatives` marks a file once it has every rendition the table owes it
  * (`@media/rendition-marker`): `renditionsFor`, the signature of the table's entries for the
  * file's kind. This finds the files whose marker is missing or names another signature, by one
- * query per kind rather than a walk, in every tree under the path (`/` unless one is given), and
- * announces `media.renditions.stale` for each, which only the rendition pipelines take: they make
- * what is missing and mark the file. A changed table changes the signature of the kinds it
- * changed, so the next scan reopens those files and no others. A file with a rendition refused
- * under a CPU budget EMS no longer runs is announced too, so the refused rendition is tried again.
+ * query per kind (per mimetype for a document) rather than a walk, in every tree under the path
+ * (`/` unless one is given), and announces `media.renditions.stale` for each, which only the
+ * rendition pipelines take: they make what is missing and mark the file. A changed table changes
+ * the signature of the kinds it changed, so the next scan reopens those files and no others. A
+ * file with a rendition refused under a CPU budget EMS no longer runs is announced too, so the
+ * refused rendition is tried again.
  *
  * What it passes over is `@media/stale-scan`'s, and a folder that does not want renditions
  * (`processing`).
@@ -18,19 +19,25 @@
  * `renditions-heal` service runs it; `--limit` caps the facts of one run, and 0 lifts the cap.
  */
 
-import type { RenditionKind } from '@ein/api';
-import type { CmdReturn, Command } from '@ein/client';
+import { RENDERED_DOCUMENT_MIMETYPES, type RenditionKind, renditionKindOf } from '@ein/api';
+import type { AttrCondition, CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, readRenditionTable, reportUnknownFlags } from '@ein/client';
 import { resolve } from '@std/path';
 import { generations } from '@ems/client';
 import type { RenditionsScanAnswer } from '@media/api';
 import { RENDITION_FACTS } from '@media/facts';
+import { isTextReadPath } from '@media/file-rules';
 import { refusalsOf, RENDITIONS_FOR_ATTR, renditionSignature, TRANSCODE_REFUSED_ATTR } from '@media/rendition-marker';
 import { scanStale, type StaleQuery } from '@media/stale-scan';
 import { allWait, factsWaiting } from '@media/waiting';
 
-/** The mimetypes of each kind of the table. */
-const PREFIXES: Record<RenditionKind, string> = { photo: 'image/', video: 'video/', audio: 'audio/' };
+/** The mimetypes of each kind of the table: a media kind's by its prefix, a document's one by one. */
+const MIMETYPES: Record<RenditionKind, AttrCondition[]> = {
+  photo: [{ ref: 'mimetype', op: 'prefix', value: 'image/' }],
+  video: [{ ref: 'mimetype', op: 'prefix', value: 'video/' }],
+  audio: [{ ref: 'mimetype', op: 'prefix', value: 'audio/' }],
+  document: RENDERED_DOCUMENT_MIMETYPES.map((mimetype) => ({ ref: 'mimetype', op: 'eq', value: mimetype })),
+};
 
 /** Facts one run announces at most, unless `--limit` says otherwise. */
 const DEFAULT_LIMIT = 1000;
@@ -78,14 +85,18 @@ const renditionsScan = async (cmd: Command): CmdReturn => {
   const unchecked = budget === undefined ? ['refusals'] : [];
 
   const signatures = new Map<RenditionKind, string>();
-  for (const kind of Object.keys(PREFIXES) as RenditionKind[]) signatures.set(kind, await renditionSignature(table, kind));
-  const kindOf = (attrs: Record<string, unknown>) => (Object.keys(PREFIXES) as RenditionKind[]).find((kind) => String(attrs.mimetype ?? '').startsWith(PREFIXES[kind]));
+  for (const kind of Object.keys(MIMETYPES) as RenditionKind[]) signatures.set(kind, await renditionSignature(table, kind));
+  const kindOf = (attrs: Record<string, unknown>) => renditionKindOf(String(attrs.mimetype ?? ''));
   const marked = (attrs: Record<string, unknown>) => typeof attrs[RENDITIONS_FOR_ATTR] === 'string' ? attrs[RENDITIONS_FOR_ATTR] as string : '';
 
-  const queries: StaleQuery[] = [...signatures].map(([kind, signature]) => ({
-    where: [{ ref: 'mimetype', op: 'prefix', value: PREFIXES[kind] }, { ref: RENDITIONS_FOR_ATTR, op: 'ne', value: signature }],
-    data: (attrs) => ({ renditionsFor: marked(attrs), expected: signature }),
-  }));
+  // A document is one where its text is read too: not a node's `metadata/` or a dot folder's.
+  const queries: StaleQuery[] = [...signatures].flatMap(([kind, signature]) =>
+    MIMETYPES[kind].map((mimetype): StaleQuery => ({
+      where: [mimetype, { ref: RENDITIONS_FOR_ATTR, op: 'ne', value: signature }],
+      data: (attrs) => ({ renditionsFor: marked(attrs), expected: signature }),
+      ...(kind === 'document' ? { admits: isTextReadPath } : {}),
+    }))
+  );
   // A marked file whose refusal was recorded under another budget: the rendition may be made now.
   if (budget !== undefined) {
     queries.push({

@@ -1,5 +1,5 @@
 name: media-stills
-description: Still pictures of every media file — a photo's sizes and face crops, a video's poster frames and hover clip, an audio file's waveform
+description: Still pictures of every media file — a photo's sizes and face crops, a video's poster frames and hover clip, an audio file's waveform, a document's first page and its PDF
 
 # Cheap still-image work for every media type, kept apart from media-transcode
 # (which re-encodes video and audio) so a failed encode never takes the poster
@@ -21,6 +21,29 @@ triggers:
     wants: renditions
     skipIfAttr: undecodable
 
+  # A document written, or moved into a folder that wants renditions: its first page, and the PDF of
+  # a Word, OpenDocument or RTF file (`RENDERED_DOCUMENT_MIMETYPES`). Its metadata is never read, so
+  # it starts here rather than on `media.metadata.extracted`. The paths left out are those
+  # document-index leaves out. A document marked once is not looked at again, nor one EMS could not
+  # open: `generate-derivatives` answers that from the attr.
+  - &document
+    event: updated
+    nodeType: file
+    wants: renditions
+    unless:
+      nodePath: ['/var/**', '/etc/**', '/usr/**', '/dev/**', '/tmp/**', '**/.**', '**/metadata/**']
+    skipIfAttr: renditionsFor
+    match:
+      mimetype:
+        - application/pdf
+        - text/plain
+        - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+        - application/vnd.oasis.opendocument.text
+        - application/msword
+        - application/rtf
+  - <<: *document
+    event: moved
+
 steps:
   stills:
     command: generate-derivatives $NODE_PATH --only still
@@ -35,9 +58,10 @@ steps:
     description: The video's muted hover clip, from its poster frame on
     dependsOn: [stills]
     # A pipeline started by hand carries no event, so no mimetype: let it through, and the
-    # command itself has no hover clip to make of anything but a video.
+    # command itself has no hover clip to make of anything but a video. A fact names the mimetype
+    # as EVENT_MIMETYPE, a written document as MIMETYPE.
     condition: |
-      case "${EVENT_MIMETYPE:-video/}" in video/*) ;; *) exit 1;; esac
+      case "${EVENT_MIMETYPE}${MIMETYPE}" in ""|video/*) ;; *) exit 1;; esac
     pool: media
     kind: transcode
     priority: 10

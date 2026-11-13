@@ -1,9 +1,10 @@
 # Renditions
 
-What the media module makes of a picture, a video or a recording so a page can show and play it, and
-how it keeps them current. The pipelines `media-stills` and `media-transcode` start on
+What the media module makes of a picture, a video, a recording or a document so a page can show and
+play it, and how it keeps them current. The pipelines `media-stills` and `media-transcode` start on
 `media.metadata.extracted`, which the archive's bridge announces until this module reads files
-itself, and on `media.renditions.stale`, which `renditions-scan` announces.
+itself, and on `media.renditions.stale`, which `renditions-scan` announces; `media-stills` also on a
+document written or moved, whose metadata is never read.
 
 `generate-derivatives` reads the rendition table, `/etc/renditions.yaml`
 (`readRenditionTable` in `@ein/client`; the media module ships it in its `etc/`, which
@@ -107,6 +108,22 @@ rows, tile size; `@media/storyboard`). A video under 4 s gets none, and an EMS f
 before the op is skipped rather than failed. `--prune` keeps it by name; writing a sheet
 removes any other. The marker waits for it, so a video without one is a gap
 `renditions-scan` announces, and `media-transcode` makes the sheet.
+
+**A document's pictures are its first page.** A PDF, a plain-text file, and a Word (`.docx`,
+`.doc`), OpenDocument or RTF file (`RENDERED_DOCUMENT_MIMETYPES` in `@ein/api`) gets the image roles
+of kind `document` from one EMS `document.renditions` call: PDFium renders the first page, after
+LibreOffice has converted anything that is not a PDF, at the scale the largest box needs. A page is
+vector, so every role of the kind is made whatever its size (`pictureOf` is undefined, as for a
+waveform). The same call writes `view.pdf` (`DOCUMENT_VIEW_FILE`) for a Word, OpenDocument or RTF
+file (`CONVERTED_DOCUMENT_MIMETYPES`), which the viewer shows in the browser's own PDF reader: it is a
+`still` like the pictures, made with them, or alone when it is the one missing, and owed by the
+marker. A PDF is shown as it is and plain text as text, so neither gets one. The first page's size in
+points becomes the file's `width` and `height`, the shape the grid lays its tile out at. A document
+EMS cannot open is marked `undecodable` like a media file `exif-extract` cannot read, which the heal
+passes over and a forced run clears once it reads. `media-stills` starts on the document being
+written or moved, in the paths `document-index` reads (not `metadata/`, a dot folder or EiN's own
+trees), and passes over one already marked; `renditions-scan` asks for each document mimetype by
+itself, in the same paths.
 
 **The marker says a file's renditions are complete, and under which table.** Once a file has
 every rendition the table owes it — each role of its kind, less the sizes a small picture

@@ -6,7 +6,8 @@
  * Passed over: a rendition itself (it carries `sourceId`), a file nothing can decode, one with no
  * bytes, a picture, video or recording whose metadata is not read yet (that is discovery's gap,
  * `media-scan`'s), one in a trash or in `/etc`, `/var` and the like, one in a folder that wants
- * none of the scan's families of processing (`processing`), and one the scan's own test refuses.
+ * none of the scan's families of processing (`processing`), and one the scan's or the query's own
+ * test refuses.
  */
 
 import { DEV_PATH, ETC_PATH, isTrashPath, TEMP_PATH, USR_PATH, VAR_PATH } from '@ein/paths';
@@ -52,6 +53,8 @@ type StaleScan = {
 export type StaleQuery = {
   where: AttrCondition[];
   data: (attrs: Record<string, unknown>) => Record<string, string> | undefined;
+  /** Whether a file this query finds at the path is announced; every file when absent. */
+  admits?: (path: string) => boolean;
 };
 
 type StaleScanResult = {
@@ -72,12 +75,12 @@ export const scanStale = async (cmd: Command, scan: StaleScan, queries: StaleQue
   const encoder = new TextEncoder();
 
   /** Announce the file at `path` unless it is passed over. False once the run is at its limit. */
-  const consider = async (path: string, node: { id: string; attrs: Record<string, unknown> }, data: Record<string, string>): Promise<boolean> => {
+  const consider = async (path: string, node: { id: string; attrs: Record<string, unknown> }, data: Record<string, string>, query: StaleQuery): Promise<boolean> => {
     if (seen.has(path)) return true;
     seen.add(path);
     result.examined++;
     if (scan.skip?.has(path) || isTrashPath(path) || !(Number(node.attrs.size ?? 0) > 0)) return true;
-    if ((scan.admits && !scan.admits(path)) || !wantsProcessing(roots, path, scan.families)) return true;
+    if ((scan.admits && !scan.admits(path)) || (query.admits && !query.admits(path)) || !wantsProcessing(roots, path, scan.families)) return true;
     if (MEDIA_MIMETYPE.test(String(node.attrs.mimetype ?? ''))) {
       const exif = await cmd.sys.vfs.get(cmd.access, `${path}/metadata/exif`).catch(() => undefined);
       if (!exif?.attrs.indexedAt) return true;
@@ -117,7 +120,7 @@ export const scanStale = async (cmd: Command, scan: StaleScan, queries: StaleQue
         });
         for (const hit of page) {
           const data = query.data(hit.node.attrs);
-          if (data !== undefined && !await consider(hit.absPath, hit.node, data)) return result;
+          if (data !== undefined && !await consider(hit.absPath, hit.node, data, query)) return result;
         }
         after = page.length === PAGE ? { value: page[page.length - 1].sortValue, id: page[page.length - 1].id } : undefined;
       } while (after);

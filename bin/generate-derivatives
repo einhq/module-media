@@ -2,9 +2,20 @@
 import { resolve } from '@std/path';
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, parseArgs, reportUnknownFlags, shq, STEP_EXIT_INPUT, STEP_EXIT_TEMPORARY } from '@ein/client';
-import { audioFileName, imageFileName, imageRolesOf, type RenditionKind, type RenditionTable, storyboardFileName, videoFileName } from '@ein/api';
+import {
+  audioFileName,
+  CONVERTED_DOCUMENT_MIMETYPES,
+  DOCUMENT_VIEW_FILE,
+  imageFileName,
+  imageRolesOf,
+  RENDERED_DOCUMENT_MIMETYPES,
+  type RenditionKind,
+  type RenditionTable,
+  storyboardFileName,
+  videoFileName,
+} from '@ein/api';
 import { readRenditionTable } from '@ein/client';
-import { generations, stepExitCode } from '@ems/client';
+import { EmsError, generations, stepExitCode } from '@ems/client';
 import { UNDECODABLE_ATTR } from '@media/probe';
 import { RENDITIONS_AT_ATTR, RENDITIONS_FOR_ATTR, renditionSignature, TRANSCODE_REFUSED_ATTR, type TranscodeRefusal } from '@media/rendition-marker';
 import { generateImageLadder, type ImageLadderTarget } from '@media/image-ladder';
@@ -13,10 +24,10 @@ import { type StoryboardSpec, writeStoryboard } from '@media/storyboard';
 import { type AudioRendition, type VideoRendition, writeTranscode } from '@media/transcode';
 import { reportUnwritable } from '@media/writable';
 
-type MediaType = 'image' | 'video' | 'audio';
+type MediaType = 'image' | 'video' | 'audio' | 'document';
 
 /** The rendition table's kind for a media type. */
-const KIND_OF: Record<MediaType, RenditionKind> = { image: 'photo', video: 'video', audio: 'audio' };
+const KIND_OF: Record<MediaType, RenditionKind> = { image: 'photo', video: 'video', audio: 'audio', document: 'document' };
 
 type DerivativeClass = 'still' | 'transcode' | 'preview' | 'storyboard';
 
@@ -33,10 +44,13 @@ type DerivativeClass = 'still' | 'transcode' | 'preview' | 'storyboard';
  * poster frame was taken (`posterAt`), so `media-stills` runs it after the poster frames;
  * `media-transcode` makes it again only when forced, as on a turn. `storyboard` decodes a video's
  * whole `playback` rendition, so it is run after the transcode, in `media-transcode`; not `still`,
- * which turning a video re-makes inline (`file-set-orientation`).
+ * which turning a video re-makes inline (`file-set-orientation`). A document's PDF is `still`: it
+ * comes out of the same conversion as the first page's pictures.
  */
 type Target =
   | { role: string; kind: 'image' | 'video' | 'audio'; class: DerivativeClass }
+  /** The PDF a Word, OpenDocument or RTF file is converted to, which the viewer shows (`DOCUMENT_VIEW_FILE`). */
+  | { role: 'pdf'; kind: 'pdf'; class: DerivativeClass }
   /**
    * A video's storyboard sheet under `thumbnails/`, its frames tiled for the player's timeline
    * (`@media/storyboard`). Named by its tile rather than a box, and made from the `playback`
@@ -46,10 +60,11 @@ type Target =
 
 /**
  * Every rendition a file of `mediaType` gets: the table's image roles made of its kind (a photo's
- * sizes, a video's poster frames, a recording's waveform), a video's `preview` clip and other
- * video roles, its storyboard, and a recording's audio roles.
+ * sizes, a video's poster frames, a recording's waveform, a document's first page), a video's
+ * `preview` clip and other video roles, its storyboard, a recording's audio roles, and the PDF of a
+ * document of `mimetype` no browser shows.
  */
-const targetsOf = (table: RenditionTable, mediaType: MediaType): Target[] => {
+const targetsOf = (table: RenditionTable, mediaType: MediaType, mimetype: string): Target[] => {
   const targets: Target[] = imageRolesOf(table, KIND_OF[mediaType]).map((role) => ({ role, kind: 'image', class: 'still' }));
   if (mediaType === 'video') {
     for (const role of Object.keys(table.video)) targets.push({ role, kind: 'video', class: role === 'preview' ? 'preview' : 'transcode' });
@@ -58,6 +73,7 @@ const targetsOf = (table: RenditionTable, mediaType: MediaType): Target[] => {
   if (mediaType === 'audio') {
     for (const role of Object.keys(table.audio)) targets.push({ role, kind: 'audio', class: 'transcode' });
   }
+  if (mediaType === 'document' && CONVERTED_DOCUMENT_MIMETYPES.includes(mimetype)) targets.push({ role: 'pdf', kind: 'pdf', class: 'still' });
   return targets;
 };
 
@@ -67,6 +83,7 @@ const fileNameOf = (table: RenditionTable, target: Target): string | undefined =
   if (target.kind === 'video') return table.video[target.role] && videoFileName(table.video[target.role]);
   if (target.kind === 'audio') return table.audio[target.role] && audioFileName(table.audio[target.role]);
   if (target.kind === 'storyboard') return table.storyboard && storyboardFileName(table.storyboard);
+  if (target.kind === 'pdf') return DOCUMENT_VIEW_FILE;
   return undefined;
 };
 
@@ -104,10 +121,11 @@ const POSTER_AT_ATTR = 'posterAt';
 /**
  * The picture a viewer sees of this source — rotation and pixel aspect applied — or undefined
  * when the node has no stored dimensions. Audio has no picture at all: its waveform is drawn
- * to fit each box rather than resized from anything.
+ * to fit each box rather than resized from anything; and a document's page is rendered at the
+ * size each box asks.
  */
 const pictureOf = (attrs: Record<string, unknown>, mediaType: MediaType): Dims | undefined => {
-  if (mediaType === 'audio') return undefined;
+  if (mediaType === 'audio' || mediaType === 'document') return undefined;
   const width = Number(attrs.width);
   const height = Number(attrs.height);
   if (!(width > 0 && height > 0)) return undefined;
@@ -152,7 +170,7 @@ const generateDerivatives = async (cmd: Command): CmdReturn => {
   // not mean paying for that walk twice.
   let sizeFilter: Set<string> | undefined;
   if (flags.size !== undefined) {
-    const roles = new Set(['storyboard', ...Object.keys(table.image), ...Object.keys(table.video), ...Object.keys(table.audio)]);
+    const roles = new Set(['storyboard', 'pdf', ...Object.keys(table.image), ...Object.keys(table.video), ...Object.keys(table.audio)]);
     const names = flags.size.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
     const bad = names.filter((n) => !roles.has(n));
     if (names.length === 0 || bad.length > 0) {
@@ -208,7 +226,15 @@ const generateDerivatives = async (cmd: Command): CmdReturn => {
     return 0;
   }
 
-  const mediaType = mimetype.startsWith('image/') ? 'image' : mimetype.startsWith('video/') ? 'video' : mimetype.startsWith('audio/') ? 'audio' : undefined;
+  const mediaType = mimetype.startsWith('image/')
+    ? 'image'
+    : mimetype.startsWith('video/')
+    ? 'video'
+    : mimetype.startsWith('audio/')
+    ? 'audio'
+    : RENDERED_DOCUMENT_MIMETYPES.includes(mimetype)
+    ? 'document'
+    : undefined;
   if (!mediaType) {
     await cmd.writeError(`generate-derivatives: ${inputPath}: unsupported mimetype ${mimetype}\n`);
     return STEP_EXIT_INPUT;
@@ -242,7 +268,7 @@ const generateDerivatives = async (cmd: Command): CmdReturn => {
   // The source's length, which decides whether it is owed a clip and a storyboard at all.
   const duration = Number(fileAttrs.duration);
 
-  const allTargets = targetsOf(table, mediaType);
+  const allTargets = targetsOf(table, mediaType, mimetype);
 
   // The still pictures a source this small never needs. `contain` does not upscale, so the
   // first box the picture fits inside stores it at its own size and every larger box would
@@ -296,17 +322,47 @@ const generateDerivatives = async (cmd: Command): CmdReturn => {
     ladderTargets.push({ outputPath, width: rendition.width, height: rendition.height, fit: rendition.fit, quality: rendition.quality });
   }
 
-  if (ladderTargets.length > 0) {
+  // A document's PDF comes out of the conversion its pictures are rendered from, so it is made in the
+  // same call: with them, or alone when it is the one missing.
+  let pdfPath: string | undefined;
+  if (targets.some((t) => t.kind === 'pdf')) {
+    const outputPath = `${destDir}/${DOCUMENT_VIEW_FILE}`;
+    const existing = force ? undefined : await cmd.sys.vfs.get(cmd.access, outputPath).catch(() => undefined);
+    if (Number(existing?.attrs.size ?? 0) > 0) {
+      if (verbose) await cmd.writeLn(`${outputPath} exists, skipping (use -f to force)`);
+    } else {
+      pdfPath = outputPath;
+    }
+  }
+
+  if (ladderTargets.length > 0 || pdfPath) {
+    const outputs = ladderTargets.length + (pdfPath ? 1 : 0);
     try {
-      if (verbose) await cmd.writeLn(`Generating ${ladderTargets.length} image size(s) from one decode...`);
-      const ladder = await generateImageLadder(cmd, {
-        path: inputPath,
-        id: nodeInfo.id,
-        mimetype,
-        angle: fileAttrs.angle,
-        mirror: fileAttrs.mirror,
-      }, ladderTargets);
+      if (verbose) await cmd.writeLn(`Generating ${ladderTargets.length} image size(s) from one decode${pdfPath ? ' and the PDF' : ''}...`);
+      const ladder = await generateImageLadder(
+        cmd,
+        {
+          path: inputPath,
+          id: nodeInfo.id,
+          mimetype,
+          angle: fileAttrs.angle,
+          mirror: fileAttrs.mirror,
+          document: mediaType === 'document',
+        },
+        ladderTargets,
+        pdfPath,
+      );
       created.push(...ladder.written);
+      // A document's first page, in points, which is the shape its tile is laid out at; one read
+      // after all, by a forced run, is no longer undecodable.
+      if (ladder.page) {
+        const width = Math.round(ladder.page.width);
+        const height = Math.round(ladder.page.height);
+        const wasUndecodable = typeof fileAttrs[UNDECODABLE_ATTR] === 'string';
+        if (width > 0 && height > 0 && (fileAttrs.width !== width || fileAttrs.height !== height || wasUndecodable)) {
+          await cmd.sys.vfs.update(cmd.access, inputPath, { attrs: { width, height, ...(wasUndecodable ? { [UNDECODABLE_ATTR]: null } : {}) } });
+        }
+      }
       if (ladder.posterAt !== undefined) {
         // EMS asks for the frame a second in; a later one means that frame was blank.
         const posterAt = ladder.posterAt > 1 ? ladder.posterAt : null;
@@ -316,13 +372,18 @@ const generateDerivatives = async (cmd: Command): CmdReturn => {
       }
     } catch (error) {
       await cmd.writeError(`generate-derivatives: image ladder: ${error instanceof Error ? error.message : String(error)}\n`);
-      failed += ladderTargets.length;
-      emsFailures.push(...ladderTargets.map(() => stepExitCode(error)));
+      // A document neither PDFium nor LibreOffice can open: marked like a media file `exif-extract`
+      // cannot, so neither the pipelines nor the heals ask for it again until it is forced.
+      if (mediaType === 'document' && error instanceof EmsError && error.code === 'undecodable') {
+        await cmd.sys.vfs.update(cmd.access, inputPath, { attrs: { [UNDECODABLE_ATTR]: error.detail } });
+      }
+      failed += outputs;
+      emsFailures.push(...Array.from({ length: outputs }, () => stepExitCode(error)));
     }
   }
 
   for (const target of targets) {
-    if (target.kind === 'image') continue;
+    if (target.kind === 'image' || target.kind === 'pdf') continue;
     if (target.kind === 'storyboard') {
       // A target only when the table has both, so this is a guard for the type alone.
       if (!storyboard) continue;
@@ -546,7 +607,7 @@ const generateDerivatives = async (cmd: Command): CmdReturn => {
 generateDerivatives.spec = {
   name: 'generate-derivatives',
   effect: 'write' as const,
-  description: 'Generate web derivatives (still pictures, transcoded renditions) for a media file',
+  description: "Generate web derivatives (still pictures, transcoded renditions, a document's PDF) for a media file or a document",
   args: [
     { name: 'input', type: 'path' as const, description: 'VFS path to media file' },
   ],
@@ -554,7 +615,7 @@ generateDerivatives.spec = {
     { name: 'v', type: 'bool' as const, description: 'Verbose output' },
     { name: 'f', type: 'bool' as const, description: 'Force regenerate even if derivatives exist' },
     { name: 'only', type: 'string' as const, description: `Generate one class only: ${DERIVATIVE_CLASSES.join(' | ')}` },
-    { name: 'size', type: 'string' as const, description: 'Generate only these roles (comma-separated): roles of /etc/renditions.yaml, or storyboard' },
+    { name: 'size', type: 'string' as const, description: 'Generate only these roles (comma-separated): roles of /etc/renditions.yaml, storyboard, or pdf' },
     { name: 'prune', type: 'bool' as const, description: 'Delete renditions under thumbnails/ that are no longer targets' },
   ],
   examples: [

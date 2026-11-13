@@ -1,9 +1,10 @@
 /**
- * The still-image ladder: every AVIF size a photo, a video's poster frame or a recording's
- * waveform gets, staged, validated and published as one unit.
+ * The still-image ladder: every AVIF size a photo, a video's poster frame, a recording's
+ * waveform or a document's first page gets, staged, validated and published as one unit, with the
+ * PDF a document is converted to when it is asked for.
  *
  * EMS does the decoding and the encoding (`image.renditions`, `video.poster`,
- * `audio.waveform`); this side owns the nodes. Each output is created as a hidden temp
+ * `audio.waveform`, `document.renditions`); this side owns the nodes. Each output is created as a hidden temp
  * sibling of its final path, EMS writes its bytes there, `file-sync`'s job is done through
  * `statX`, and only once every output has bytes are the temps renamed over the finals. An
  * interrupted run — container restart, OOM kill, a stopped worker — therefore never leaves a
@@ -12,7 +13,7 @@
  */
 import type { Command } from '@ein/client';
 import { dirname } from '@std/path';
-import { poster, type RenditionFit, renditions, type RenditionTarget, waveform } from '@ems/client';
+import { documentRenditions, poster, type RenditionFit, renditions, type RenditionTarget, waveform } from '@ems/client';
 import { normalizeAngle, normalizeMirror } from '@media/orientation';
 import { removeNode, sweepStaleTemps, syncNonEmpty } from '@media/staged-output';
 
@@ -30,6 +31,8 @@ type ImageLadderSource = {
   mimetype: string;
   angle: unknown;
   mirror: unknown;
+  /** A document, whose pictures are its first page (`document.renditions`); the caller says so, the mimetype does not. */
+  document?: boolean;
 };
 
 /**
@@ -72,31 +75,45 @@ export const renditionTarget = (target: ImageLadderTarget, output: string): Rend
   };
 };
 
-/** The outputs a ladder published, and for a video the second its poster frame was taken at. */
-type ImageLadder = { written: string[]; posterAt?: number };
+/**
+ * The outputs a ladder published, for a video the second its poster frame was taken at, and for a
+ * document its first page's size in points.
+ */
+type ImageLadder = { written: string[]; posterAt?: number; page?: { width: number; height: number } };
+
+/** A staged output: where EMS writes it, and the final path it is renamed to. */
+type Staged = { outputPath: string; tempName: string; tempPath: string };
 
 /**
  * Build a still-image ladder from one decode, stage all files, validate them, then publish.
- * Existing final renditions remain untouched if conversion or validation fails.
+ * Existing final renditions remain untouched if conversion or validation fails. `pdf`, beside the
+ * pictures, is where a document's PDF goes, which is then made with them, or alone.
  */
 export const generateImageLadder = async (
   cmd: Command,
   source: ImageLadderSource,
   targets: ReadonlyArray<ImageLadderTarget>,
+  pdf?: string,
 ): Promise<ImageLadder> => {
-  if (targets.length === 0) return { written: [] };
-  const destDir = dirname(targets[0].outputPath);
+  if (targets.length === 0 && !pdf) return { written: [] };
+  const destDir = dirname(targets[0]?.outputPath ?? pdf!);
   const staged: StagedTarget[] = [];
+  const stagedAll: Staged[] = [];
   await sweepStaleTemps(cmd, destDir, TEMP_PREFIX);
 
+  const stage = async (outputPath: string, extension: string): Promise<Staged> => {
+    if (dirname(outputPath) !== destDir) throw new Error('all image ladder outputs must share a directory');
+    const tempName = `${TEMP_PREFIX}${crypto.randomUUID()}.${extension}`;
+    const tempPath = `${destDir}/${tempName}`;
+    await cmd.sys.vfs.create(cmd.access, 'file', destDir, tempName, { attrs: { sourceId: source.id } });
+    const one = { outputPath, tempName, tempPath };
+    stagedAll.push(one);
+    return one;
+  };
+
   try {
-    for (const target of targets) {
-      if (dirname(target.outputPath) !== destDir) throw new Error('all image ladder outputs must share a directory');
-      const tempName = `${TEMP_PREFIX}${crypto.randomUUID()}.avif`;
-      const tempPath = `${destDir}/${tempName}`;
-      await cmd.sys.vfs.create(cmd.access, 'file', destDir, tempName, { attrs: { sourceId: source.id } });
-      staged.push({ ...target, tempName, tempPath });
-    }
+    for (const target of targets) staged.push({ ...target, ...await stage(target.outputPath, 'avif') });
+    const stagedPdf = pdf ? await stage(pdf, 'pdf') : undefined;
 
     const wanted = staged.map((target) => renditionTarget(target, target.tempPath));
     const angle = normalizeAngle(source.angle);
@@ -104,7 +121,10 @@ export const generateImageLadder = async (
     const common = { mimetype: source.mimetype, targets: wanted };
 
     let posterAt: number | undefined;
-    if (source.mimetype.startsWith('video/')) {
+    let page: ImageLadder['page'];
+    if (source.document) {
+      page = (await documentRenditions(cmd, source.path, { ...common, ...(stagedPdf ? { pdf: stagedPdf.tempPath } : {}) })).page;
+    } else if (source.mimetype.startsWith('video/')) {
       // EMS takes it a second in, past the black leader most cameras record, or the first frame
       // when the picture is shorter than that; a blank frame there gives way to a later one.
       posterAt = (await poster(cmd, source.path, { ...common, angle, mirror, skipBlank: true })).t;
@@ -115,17 +135,17 @@ export const generateImageLadder = async (
     }
 
     // Validate every staged output before replacing any currently servable rendition.
-    for (const target of staged) await syncNonEmpty(cmd, target.tempPath, 'image conversion');
+    for (const target of stagedAll) await syncNonEmpty(cmd, target.tempPath, 'image conversion');
 
-    for (const target of staged) {
+    for (const target of stagedAll) {
       if (await cmd.sys.vfs.exists(cmd.access, target.outputPath)) {
         await cmd.sys.vfs.unlink(cmd.access, target.outputPath, destDir, { recursive: true });
       }
       const finalName = target.outputPath.slice(destDir.length + 1);
       await cmd.sys.vfs.rename(cmd.access, destDir, target.tempName, destDir, finalName, { failIfExists: true });
     }
-    return { written: targets.map((target) => target.outputPath), ...(posterAt !== undefined ? { posterAt } : {}) };
+    return { written: stagedAll.map((target) => target.outputPath), ...(posterAt !== undefined ? { posterAt } : {}), ...(page ? { page } : {}) };
   } finally {
-    for (const target of staged) await removeNode(cmd, target.tempPath, destDir);
+    for (const target of stagedAll) await removeNode(cmd, target.tempPath, destDir);
   }
 };

@@ -2,15 +2,25 @@
  * The media module's pipelines: each trigger names the family of work it does (`renditions`,
  * `picture-vectors`, `fingerprints`, `text`, `transcripts`), so a folder that wants none gets none, and one that
  * decodes the source skips a source nothing can decode; reading names none, since every family
- * needs it. Every kind a step queues under in the media pool is one the module's own
+ * needs it. A written document starts media-stills on the documents a picture is made of, in the
+ * paths document-index reads. Every kind a step queues under in the media pool is one the module's own
  * drop-ins name for the workers, or its jobs would wait forever, and a model-bound step takes one
  * slot.
  */
 
 import { assertEquals } from '@std/assert';
 import { parse as parseYaml } from '@std/yaml';
+import { RENDERED_DOCUMENT_MIMETYPES } from '@ein/api';
+import { RENDITIONS_FOR_ATTR } from '@media/rendition-marker';
 
-type Trigger = { on?: string; event?: string; wants?: string | string[]; skipIfAttr?: string };
+type Trigger = {
+  on?: string;
+  event?: string;
+  wants?: string | string[];
+  skipIfAttr?: string;
+  match?: { mimetype?: string[] };
+  unless?: { nodePath?: string[] };
+};
 type PipelineFile = {
   trigger?: Trigger;
   triggers?: Trigger[];
@@ -62,8 +72,21 @@ Deno.test('every trigger names its family, and a pipeline that decodes the sourc
       const which = `${name}: ${trigger.on ?? trigger.event}`;
       if (name in UNGATED) assertEquals(trigger.wants, undefined, `${name}: ${UNGATED[name]}`);
       else assertEquals(trigger.wants, FAMILIES[name], which);
-      if (DECODING.has(name)) assertEquals(trigger.skipIfAttr, 'undecodable', which);
+      // A written document's own trigger skips one already marked: `generate-derivatives` marks one
+      // EMS cannot open as undecodable and answers it from the attr.
+      if (DECODING.has(name)) assertEquals(trigger.skipIfAttr, trigger.event ? RENDITIONS_FOR_ATTR : 'undecodable', which);
     }
+  }
+});
+
+Deno.test('a written or moved document starts media-stills where document-index would read it', async () => {
+  const found = new Map(await pipelines());
+  const documents = found.get('media-stills.yaml')!.triggers!.filter((trigger) => trigger.event);
+  const read = found.get('document-index.yaml')!.triggers!.find((trigger) => trigger.event === 'updated')!;
+  assertEquals(documents.map((trigger) => trigger.event), ['updated', 'moved']);
+  for (const trigger of documents) {
+    assertEquals(trigger.match?.mimetype, [...RENDERED_DOCUMENT_MIMETYPES], trigger.event);
+    assertEquals(trigger.unless?.nodePath, read.unless?.nodePath, trigger.event);
   }
 });
 

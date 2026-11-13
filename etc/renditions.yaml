@@ -1,4 +1,4 @@
-# The renditions made of every picture, video and recording, by the role each plays. The pages ask
+# The renditions made of every picture, video, recording and document, by the role each plays. The pages ask
 # for a role (a grid tile draws `grid`, the lightbox chooses among `small`, `medium` and `large`),
 # and the media pipelines make them.
 #
@@ -12,7 +12,9 @@
 #
 # The Media module installed this copy; a newer version of it never overwrites it.
 
-# Pictures, in AVIF: a photo at each size, a video's poster frames, a recording's waveform.
+# Pictures, in AVIF: a photo at each size, a video's poster frames, a recording's waveform, a
+# document's first page. A Word, OpenDocument or RTF file is also converted to PDF for the viewer,
+# which this table does not name.
 #
 # `contain` fits the picture inside the box and never enlarges it, so a picture smaller than a box
 # is kept at its own size in the first box it fits, and the boxes above it are not made: they
@@ -20,15 +22,17 @@
 # serves only what crops to a square anyway, the map marker and the album cover card.
 #
 # `quality` is libheif's AVIF scale: 60 lands within 0.006 SSIM of WebP at 85, at about half the
-# bytes. `kinds` says what each is made of; a video's poster frames and a recording's waveform stop
-# at `medium`, since only the photo lightbox reaches `large`.
+# bytes. `kinds` says what each is made of (`photo`, `video`, `audio`, `document`); a video's poster
+# frames, a recording's waveform and a document's page stop at `medium`, since only the photo
+# lightbox reaches `large`. A document's page is rendered at the size each box asks, so a small
+# page is no reason to leave a size out.
 image:
-  thumb: { width: 320, height: 320, fit: cover, quality: 55, kinds: [photo, video, audio] }
+  thumb: { width: 320, height: 320, fit: cover, quality: 55, kinds: [photo, video, audio, document] }
   # The justified grid's tile: `contain`, since a tile is the picture's own shape, and 512 so a row
   # about 200 px high still has pixels to spare on a 2x display.
-  grid: { width: 512, height: 512, fit: contain, quality: 58, kinds: [photo, video, audio] }
-  small: { width: 800, height: 800, fit: contain, quality: 60, kinds: [photo, video, audio] }
-  medium: { width: 1600, height: 1600, fit: contain, quality: 60, kinds: [photo, video, audio] }
+  grid: { width: 512, height: 512, fit: contain, quality: 58, kinds: [photo, video, audio, document] }
+  small: { width: 800, height: 800, fit: contain, quality: 60, kinds: [photo, video, audio, document] }
+  medium: { width: 1600, height: 1600, fit: contain, quality: 60, kinds: [photo, video, audio, document] }
   large: { width: 2560, height: 2560, fit: contain, quality: 60, kinds: [photo] }
 
 # Video, in AV1 in MP4, fitted inside the box and never enlarged, so a portrait keeps its shape and

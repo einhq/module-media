@@ -15,10 +15,11 @@ module's hold command (`/etc/media-read.d/<module>/hold`) whether to leave it un
 turned, removed, read, its renditions made — which pipelines start on (`@media/file-rules`, and the
 bridge runner `@media/bridge`). [architecture/reading.md](architecture/reading.md) says how.
 
-The renditions of every picture, video and recording in a folder that wants them (`processing`):
-the roles `/etc/renditions.yaml` names, which the module installs once and never overwrites,
-made by `generate-derivatives` in the pipelines `media-stills` and `media-transcode`, with a
-video's storyboard and chapters (`detect-chapters`). A file that has all of them is marked with
+The renditions of every picture, video, recording and document in a folder that wants them
+(`processing`): the roles `/etc/renditions.yaml` names, which the module installs once and never
+overwrites, made by `generate-derivatives` in the pipelines `media-stills` and `media-transcode`,
+with a video's storyboard and chapters (`detect-chapters`), and a document's first page and the PDF
+a Word, OpenDocument or RTF file is converted to. A file that has all of them is marked with
 the table they were made by, and the `renditions-heal` service runs `renditions-scan` every hour,
 which announces the files whose mark is missing or names another table. `regenerate` makes them
 again under a folder. [architecture/renditions.md](architecture/renditions.md) says how.
