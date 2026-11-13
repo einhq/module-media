@@ -87,6 +87,13 @@
         "takenAtUtc"
       ],
       "partial": "damage"
+    },
+    {
+      "name": "damage",
+      "on": [
+        "damage"
+      ],
+      "using": "statistics"
     }
   ],
   "config": {
