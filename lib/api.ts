@@ -102,6 +102,19 @@ export type ExifExtractAnswer =
   | { indexedAt: string; width?: number; height?: number; sar?: number; angle?: number; undecodable?: string }
   | { held: string; by: string };
 
+/** A kind of damage a picture is found to have, as its `damage` attr lists it (`find-damage`). */
+export type DamageKind = 'faded' | 'dust' | 'scratches';
+
+/** How faded, dusty and scratched a picture is, each from 0 (none) to 1 (as much as a picture worth restoring for it has). */
+export type DamageScores = { faded: number; dusty: number; scratched: number };
+
+/**
+ * `find-damage`, and the attrs it keeps on the file: the kinds of damage found, the scores they
+ * come from, what read them (EMS's producer) and when. A picture EMS cannot read has no scores and
+ * no kinds.
+ */
+export type FindDamageAnswer = { damage: DamageKind[]; damageScores: DamageScores | null; damageBy: string | null; damageAt: string };
+
 /** One step of a restoration: the EMS op that made it, what it was asked, and what answered. */
 export type RestorationStep = { op: string; params: Record<string, unknown>; producer: string };
 
@@ -118,6 +131,24 @@ export type Restoration = { steps: RestorationStep[]; at: string; marked?: numbe
  * `marks` the same in the picture's display frame, small enough for a page to lay over the original.
  */
 export type FileRestoreAnswer = { path: string; name: string; restoration: Restoration; mask?: string; marks?: string };
+
+/**
+ * A restoration asked for and not yet made, as a picture's `restoreRequest` attr (`file-restore
+ * --queue`): its steps, as `file-restore`'s flags name them, and when it was asked. `failed` says
+ * why it could not be made; such a request is not run again.
+ */
+export type RestoreRequest = {
+  unfade: boolean;
+  dust: boolean;
+  dark: boolean;
+  fill: 'ns' | 'telea' | 'lama';
+  grain?: number;
+  at: string;
+  failed?: string;
+};
+
+/** `file-restore --queue`: the pictures whose restoration is queued, and those refused, each with why. */
+export type FileRestoreQueueAnswer = { queued: string[]; refused: { path: string; reason: string }[] };
 
 /**
  * `file-crop`: the file it wrote and that file's size in pixels, and `frame` the size of the

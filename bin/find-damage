@@ -1,0 +1,90 @@
+#!ts
+import { resolve } from '@std/path';
+import type { CmdReturn, Command } from '@ein/client';
+import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
+import { findDamage, generations, isFileFault, stepExitCode } from '@ems/client';
+import type { FindDamageAnswer } from '@media/api';
+import { damageFound, RESTORABLE } from '@media/damage';
+import { UNDECODABLE_ATTR } from '@media/probe';
+import { reportUnwritable } from '@media/writable';
+
+/**
+ * How damaged a picture is, with EMS `image.damage`: how faded, dusty and scratched, each scored from
+ * 0 to 1, kept on the file to find the pictures worth restoring.
+ *
+ * `damageScores` holds the three scores, `damage` the kinds whose score reaches 0.5 (`faded`,
+ * `dust`, `scratches`, a list `search --has damage=faded` finds), `damageBy` what read them and
+ * `damageAt` when. A picture EMS cannot read gets no scores and an empty `damage`, stamped with
+ * what tried, so it is not asked again until that changes. The file's bytes are never written.
+ */
+const findDamageCommand = async (cmd: Command): CmdReturn => {
+  const unknown: string[] = [];
+  const flags = parseArgs(cmd.args, {
+    boolean: ['force', 'verbose'],
+    alias: { f: 'force', v: 'verbose' },
+    unknown: collectUnknownFlags(unknown),
+  });
+  if (await reportUnknownFlags(cmd, unknown)) return 1;
+  const fail = async (message: string): Promise<number> => {
+    await cmd.writeError(`find-damage: ${message}\n`);
+    return 1;
+  };
+
+  const inputPath = flags._.length > 0 ? resolve(cmd.cwd, String(flags._[0])) : '';
+  if (!inputPath) return await fail('missing file path');
+  const node = await cmd.sys.vfs.get(cmd.access, inputPath).catch(() => undefined);
+  if (!node) return await fail(`${inputPath}: file not found or unreadable`);
+  if (node.type !== 'file') return await fail(`${inputPath}: not a file node (is ${node.type})`);
+  if (node.attrs.sourceId) return await fail(`${inputPath}: a rendition or version; read the file it belongs to`);
+  const mimetype = typeof node.attrs.mimetype === 'string' ? node.attrs.mimetype : '';
+  if (!RESTORABLE.has(mimetype)) return await fail(`${inputPath}: ${mimetype || 'no mimetype'} is not read for damage; only JPEG, PNG, TIFF, WebP and BMP pictures`);
+  if (await reportUnwritable(cmd, inputPath, node)) return 1;
+  if (!flags.force && typeof node.attrs.damageAt === 'string' && node.attrs.damageAt) {
+    if (flags.verbose) await cmd.writeLn('Already read, skipping (use -f to read again)');
+    return 0;
+  }
+
+  const at = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  // A picture EMS cannot read: asking again cannot change the answer, so it is stamped with what tried.
+  const unread = async (why: string): Promise<FindDamageAnswer> => {
+    if (flags.verbose) await cmd.writeLn(`Not readable, marking: ${why}`);
+    return { damage: [], damageScores: null, damageBy: (await generations(cmd))?.damage ?? null, damageAt: at };
+  };
+  let answer: FindDamageAnswer;
+  const undecodable = node.attrs[UNDECODABLE_ATTR];
+  if (typeof undecodable === 'string' && undecodable) {
+    answer = await unread(`cannot be decoded (${undecodable})`);
+  } else {
+    try {
+      const found = await findDamage(cmd, inputPath);
+      const scores = { faded: found.faded, dusty: found.dusty, scratched: found.scratched };
+      answer = { damage: damageFound(scores), damageScores: scores, damageBy: found.producer, damageAt: at };
+    } catch (error) {
+      if (!isFileFault(error)) {
+        await fail(`${inputPath}: ${error instanceof Error ? error.message : String(error)}`);
+        return stepExitCode(error);
+      }
+      answer = await unread(error.message);
+    }
+  }
+
+  await cmd.sys.vfs.update(cmd.access, inputPath, { attrs: answer });
+  if (cmd.json) await cmd.writeJSON(answer);
+  else if (flags.verbose || answer.damage.length > 0) await cmd.writeLn(`${inputPath}: ${answer.damage.join(', ') || 'no damage found'}`);
+  return 0;
+};
+
+findDamageCommand.spec = {
+  name: 'find-damage',
+  effect: 'write' as const,
+  description: 'Read how faded, dusty and scratched a picture is, and keep it on the file to find those worth restoring',
+  args: [{ name: 'file', type: 'path' as const, description: 'The picture to read (JPEG, PNG, TIFF, WebP or BMP); its bytes are never written' }],
+  flags: [
+    { name: 'f', type: 'bool' as const, description: 'Read again even if already read' },
+    { name: 'v', type: 'bool' as const, description: 'Say what was found, or why nothing was' },
+  ],
+  examples: ['find-damage /archive/scans/1974/print-07.jpg'],
+  returns: 'The kinds of damage found (faded, dust, scratches), the scores from 0 to 1, what read them and when',
+};
+
+export default findDamageCommand;

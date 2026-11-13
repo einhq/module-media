@@ -14,6 +14,7 @@
     "@media/bridge": "./lib/bridge.ts",
     "@media/chapters": "./lib/chapters.ts",
     "@media/chromaprint": "./lib/chromaprint.ts",
+    "@media/damage": "./lib/damage.ts",
     "@media/exif-date": "./lib/exif-date.ts",
     "@media/exif-service": "./lib/exif-service.ts",
     "@media/extracted-text": "./lib/extracted-text.ts",
