@@ -29,11 +29,17 @@ const ordered = (value: unknown): unknown => {
  * The signature of what the table makes of a file of `kind`: its picture roles made of that kind,
  * and a video's or a recording's roles, with the storyboard a video's playback is tiled into. The
  * first 16 hex digits of the SHA-256 of that part, so a change to the audio roles leaves every
- * photo's marker current.
+ * photo's marker current. A picture role's `kinds` enter a media kind's signature without
+ * `document`, so documents taking a role or leaving it reopens no picture, video or recording.
  */
 export const renditionSignature = async (table: RenditionTable, kind: RenditionKind): Promise<string> => {
+  const kindsOf = (kinds: RenditionKind[]) => kind === 'document' ? kinds : kinds.filter((other) => other !== 'document');
   const part = {
-    image: Object.fromEntries(Object.entries(table.image).filter(([, rendition]) => rendition.kinds.includes(kind))),
+    image: Object.fromEntries(
+      Object.entries(table.image).filter(([, rendition]) => rendition.kinds.includes(kind)).map((
+        [role, rendition],
+      ) => [role, { ...rendition, kinds: kindsOf(rendition.kinds) }]),
+    ),
     ...(kind === 'video' ? { video: table.video, storyboard: table.video.playback ? table.storyboard ?? null : null } : {}),
     ...(kind === 'audio' ? { audio: table.audio } : {}),
   };

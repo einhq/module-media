@@ -129,7 +129,9 @@ itself, in the same paths.
 every rendition the table owes it — each role of its kind, less the sizes a small picture
 does without, the clip a video under 2 s and the storyboard one under 4 s are never owed —
 `generate-derivatives` writes `renditionsFor`, the first 16 hex digits of the SHA-256 of the
-table's entries for the file's kind (`@media/rendition-marker`), and `renditionsAt`.
+table's entries for the file's kind (`@media/rendition-marker`), and `renditionsAt`. A picture
+role's `kinds` count in a photo's, a video's or a recording's signature without `document`, so
+documents taking a role reopens only documents.
 A rendition EMS refused under its CPU budget (`transcodeRefused`), a storyboard EMS cannot read
 the rendition for or has no route for, and the storyboard of a refused playback count as
 accounted for. Stills and transcodes are separate pipelines, so whichever run completes the

@@ -143,4 +143,8 @@ Deno.test('a changed table changes the signature of the kinds it changed, and no
   assertEquals(await signatures({ ...table, image: { ...table.image, thumb: { ...table.image.thumb, width: 400 } } }), [false, false, false]);
   // The same table written with its keys in another order is the same table.
   assertEquals(await signatures({ audio: table.audio, video: table.video, image: { large: table.image.large, thumb: table.image.thumb } }), [true, true, true]);
+  // Documents taking a role change a document's signature, and no picture's, video's or recording's.
+  const documents: RenditionTable = { ...table, image: { ...table.image, thumb: { ...table.image.thumb, kinds: ['photo', 'video', 'audio', 'document'] } } };
+  assertEquals(await signatures(documents), [true, true, true]);
+  assertEquals(await renditionSignature(documents, 'document') === await renditionSignature(table, 'document'), false);
 });
