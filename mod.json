@@ -80,6 +80,13 @@
       "on": [
         "mimetype"
       ]
+    },
+    {
+      "name": "damage_time",
+      "on": [
+        "takenAtUtc"
+      ],
+      "partial": "damage"
     }
   ],
   "config": {
