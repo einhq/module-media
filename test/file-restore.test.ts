@@ -23,8 +23,8 @@ Deno.test({
   const { vfs } = await testCtx.setup();
   const client = await testCtx.server.createShellClient();
 
-  /** Each op called, in order, with its body and what the file it was given held. */
-  const calls: { op: string; body: Body; read: string }[] = [];
+  /** Each op called, in order, with its body and what the file it was given held (and the source whose tags it copied). */
+  const calls: { op: string; body: Body; read: string; source?: string }[] = [];
   const step = (op: string, result: Record<string, unknown>) => async (raw: Record<string, unknown>) => {
     const body = raw as unknown as Body;
     calls.push({ op, body, read: await Deno.readTextFile(body.file.path).catch(() => '') });
@@ -41,7 +41,7 @@ Deno.test({
       'image.copy_tags': async (raw) => {
         const body = raw as unknown as Body;
         const read = await Deno.readTextFile(body.file.path);
-        calls.push({ op: 'image.copy_tags', body, read });
+        calls.push({ op: 'image.copy_tags', body, read, source: await Deno.readTextFile(body.source!.path) });
         await Deno.writeTextFile(body.output!.path, read);
         return { result: { path: body.output!.path, bytes: read.length }, meta: { producer: 'exiftool/13.10' } };
       },
@@ -60,7 +60,7 @@ Deno.test({
 
   try {
     await client.exec('mkdir -p /library/scans');
-    await client.exec('mkfile /library/scans/print.jpg');
+    await client.exec('printf print > /library/scans/print.jpg');
     await vfs.update(ADMIN_ACCESS, '/library/scans/print.jpg', { attrs: { mimetype: 'image/jpeg', width: 600, height: 400, angle: 90 } });
     const original = await vfs.get(ADMIN_ACCESS, '/library/scans/print.jpg');
 
@@ -83,7 +83,7 @@ Deno.test({
       // The last picture gets the file's tags, its turn, the steps as its history, and says a model painted it.
       const [tags] = tagging();
       assertEquals(tags.read, 'image.denoise of 4');
-      assertEquals(tags.body.source?.path, '/library/scans/print.jpg');
+      assertEquals(tags.source, 'print');
       assertEquals(tags.body.file.angle, 90);
       const history = tags.body.history as { action: string; software_agent: string; parameters: string }[];
       assertEquals(history.map((event) => event.software_agent), ['image.unfade-model', 'image.defects-model', 'image.inpaint-model', 'image.denoise-model']);
