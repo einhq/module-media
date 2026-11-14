@@ -9,11 +9,12 @@ import { UNDECODABLE_ATTR } from '@media/probe';
 import { reportUnwritable } from '@media/writable';
 
 /**
- * How damaged a picture is, with EMS `image.damage`: how faded, dusty and scratched, each scored from
- * 0 to 1, kept on the file to find the pictures worth restoring.
+ * How damaged a picture is, with EMS `image.damage`: how faded, dusty, scratched, blurred (out of
+ * focus) and shaken (the camera moved), each scored from 0 to 1, kept on the file to find the
+ * pictures worth restoring.
  *
- * `damageScores` holds the three scores, `damage` the kinds whose score reaches 0.5 (`faded`,
- * `dust`, `scratches`, a list `search --has damage=faded` finds), `damageBy` what read them and
+ * `damageScores` holds the five scores, `damage` the kinds whose score reaches 0.5 (`faded`,
+ * `dust`, `scratches`, `blurred`, `shaken`, a list `search --has damage=faded` finds), `damageBy` what read them and
  * `damageAt` when. A picture EMS cannot read gets no scores and an empty `damage`, stamped with
  * what tried, so it is not asked again until that changes. The file's bytes are never written.
  */
@@ -57,7 +58,7 @@ const findDamageCommand = async (cmd: Command): CmdReturn => {
   } else {
     try {
       const found = await findDamage(cmd, inputPath);
-      const scores = { faded: found.faded, dusty: found.dusty, scratched: found.scratched };
+      const scores = { faded: found.faded, dusty: found.dusty, scratched: found.scratched, blurred: found.blurred, shaken: found.shaken };
       answer = { damage: damageFound(scores), damageScores: scores, damageBy: found.producer, damageAt: at };
     } catch (error) {
       if (!isFileFault(error)) {
@@ -77,14 +78,14 @@ const findDamageCommand = async (cmd: Command): CmdReturn => {
 findDamageCommand.spec = {
   name: 'find-damage',
   effect: 'write' as const,
-  description: 'Read how faded, dusty and scratched a picture is, and keep it on the file to find those worth restoring',
+  description: 'Read how faded, dusty, scratched, blurred and shaken a picture is, and keep it on the file to find those worth restoring',
   args: [{ name: 'file', type: 'path' as const, description: 'The picture to read (JPEG, PNG, TIFF, WebP or BMP); its bytes are never written' }],
   flags: [
     { name: 'f', type: 'bool' as const, description: 'Read again even if already read' },
     { name: 'v', type: 'bool' as const, description: 'Say what was found, or why nothing was' },
   ],
   examples: ['find-damage /archive/scans/1974/print-07.jpg'],
-  returns: 'The kinds of damage found (faded, dust, scratches), the scores from 0 to 1, what read them and when',
+  returns: 'The kinds of damage found (faded, dust, scratches, blurred, shaken), the scores from 0 to 1, what read them and when',
 };
 
 export default findDamageCommand;

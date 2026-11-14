@@ -3,7 +3,7 @@ import { basename, resolve } from '@std/path';
 import type { CmdReturn, Command } from '@ein/client';
 import { collectUnknownFlags, type Node, parseArgs, readRenditionTable, reportUnknownFlags, shq, STEP_EXIT_TEMPORARY, verifyAccess } from '@ein/client';
 import { imageFileName, imageRolesOf } from '@ein/api';
-import { copyTags, denoise, findDefects, inpaint, type PictureEdit, renditions, type RestoreCallOptions, stepExitCode, unfade } from '@ems/client';
+import { copyTags, deblur, denoise, findDefects, inpaint, type PictureEdit, renditions, type RestoreCallOptions, stepExitCode, unfade } from '@ems/client';
 import type { FileRestoreAnswer, FileRestoreQueueAnswer, Restoration, RestorationStep, RestoreRequest } from '@media/api';
 import { RESTORABLE } from '@media/damage';
 import { generateImageLadder } from '@media/image-ladder';
@@ -12,8 +12,9 @@ import { removeNode, sweepStaleTemps, syncNonEmpty } from '@media/staged-output'
 
 /**
  * Restore a photo: a copy of it with faded colours brought back (`--unfade`, EMS `image.unfade`),
- * dust and scratches found and filled (`--dust`, `image.defects` then `image.inpaint`) and grain
- * lessened (`--grain`, `image.denoise`), in that order, each step reading what the one before
+ * dust and scratches found and filled (`--dust`, `image.defects` then `image.inpaint`), blur taken
+ * out (`--blur focus` for a picture out of focus, `--blur motion` for a shaken camera,
+ * `image.deblur`) and grain lessened (`--grain`, `image.denoise`), in that order, each step reading what the one before
  * wrote. The copy is a version of the file, `<file>/versions/restored-<n>.png` (`.tif` for a TIFF,
  * at its depth), frozen on the disk tier, with renditions of its own and a `restoration` attr
  * naming the steps and the models that answered. The file itself is never written.
@@ -68,10 +69,10 @@ const nextName = async (cmd: Command, dir: string, ext: string): Promise<string>
 };
 
 /** The steps a restoration runs, from the flags or from a queued request. */
-type Steps = { unfade: boolean; dust: boolean; dark: boolean; fill: 'ns' | 'telea' | 'lama'; grain?: number; mask?: string };
+type Steps = { unfade: boolean; dust: boolean; dark: boolean; fill: 'ns' | 'telea' | 'lama'; blur?: 'focus' | 'motion'; grain?: number; mask?: string };
 
 /** The steps asked for, or why they cannot run. */
-const stepsOf = (asked: { unfade?: unknown; dust?: unknown; dark?: unknown; fill?: unknown; grain?: unknown; mask?: string }): Steps | string => {
+const stepsOf = (asked: { unfade?: unknown; dust?: unknown; dark?: unknown; fill?: unknown; blur?: unknown; grain?: unknown; mask?: string }): Steps | string => {
   const fill = asked.fill ?? 'ns';
   if (fill !== 'ns' && fill !== 'telea' && fill !== 'lama') return `--fill is ns, telea or lama, not ${fill}`;
   if (asked.mask && asked.dust) return '--dust finds the marks and --mask gives them: name one';
@@ -79,12 +80,15 @@ const stepsOf = (asked: { unfade?: unknown; dust?: unknown; dark?: unknown; fill
   if (asked.fill !== undefined && !asked.dust && !asked.mask) return '--fill goes with --dust or --mask';
   const grain = asked.grain === undefined ? undefined : Number(asked.grain);
   if (grain !== undefined && !(grain > 0 && grain <= 1)) return `--grain is a strength above 0 and at most 1, not ${asked.grain}`;
-  if (!asked.unfade && !asked.dust && !asked.mask && grain === undefined) return 'nothing to do: name --unfade, --dust, --mask or --grain';
+  const blur = asked.blur === undefined ? undefined : asked.blur;
+  if (blur !== undefined && blur !== 'focus' && blur !== 'motion') return `--blur is focus or motion, not ${blur}`;
+  if (!asked.unfade && !asked.dust && !asked.mask && blur === undefined && grain === undefined) return 'nothing to do: name --unfade, --dust, --mask, --blur or --grain';
   return {
     unfade: Boolean(asked.unfade),
     dust: Boolean(asked.dust),
     dark: Boolean(asked.dark),
     fill,
+    ...(blur !== undefined ? { blur } : {}),
     ...(grain !== undefined ? { grain } : {}),
     ...(asked.mask ? { mask: asked.mask } : {}),
   };
@@ -105,7 +109,7 @@ const restorable = async (cmd: Command, path: string): Promise<Node | string> =>
 
 /** The steps run over the picture `node` at `inputPath` into a new version beside it; what was written. */
 const restoreFile = async (cmd: Command, inputPath: string, node: Node, steps: Steps, call: RestoreCallOptions, verbose: boolean): Promise<FileRestoreAnswer> => {
-  const { fill, grain, mask: given } = steps;
+  const { fill, blur, grain, mask: given } = steps;
   const format = node.attrs.mimetype === 'image/tiff' ? 'tiff' : 'png';
   const ext = format === 'tiff' ? 'tif' : 'png';
   const angle = normalizeAngle(node.attrs.angle);
@@ -125,7 +129,9 @@ const restoreFile = async (cmd: Command, inputPath: string, node: Node, steps: S
     return `${dir}/${name}`;
   };
 
-  const plan = [steps.unfade && 'unfade', (steps.dust || given) && 'dust', grain !== undefined && 'grain'].filter((step): step is string => Boolean(step));
+  const plan = [steps.unfade && 'unfade', (steps.dust || given) && 'dust', blur !== undefined && 'blur', grain !== undefined && 'grain'].filter((step): step is string =>
+    Boolean(step)
+  );
   const done: RestorationStep[] = [];
   let source = inputPath;
   let mask: string | undefined;
@@ -150,6 +156,9 @@ const restoreFile = async (cmd: Command, inputPath: string, node: Node, steps: S
         const made = await inpaint(cmd, source, { mask, output, format, method: fill }, call);
         if (given) marked = made.width * made.height > 0 ? made.filled / (made.width * made.height) : 0;
         done.push({ op: 'image.inpaint', params: { method: fill, ...(given ? { given: true } : {}) }, producer: made.producer });
+      } else if (step === 'blur') {
+        const made = await deblur(cmd, source, { output, format, blur: blur! }, call);
+        done.push({ op: 'image.deblur', params: { blur }, producer: made.producer });
       } else {
         const made = await denoise(cmd, source, { output, format, strength: grain }, call);
         done.push({ op: 'image.denoise', params: { strength: grain }, producer: made.producer });
@@ -236,8 +245,8 @@ const restoreFile = async (cmd: Command, inputPath: string, node: Node, steps: S
 
 /** Each picture's steps kept as its `restoreRequest`, for `media-restore` to run. */
 const queue = async (cmd: Command, paths: string[], steps: Steps): Promise<FileRestoreQueueAnswer> => {
-  const { mask: _, grain, ...rest } = steps;
-  const request: RestoreRequest = { ...rest, ...(grain !== undefined ? { grain } : {}), at: new Date().toISOString() };
+  const { mask: _, blur, grain, ...rest } = steps;
+  const request: RestoreRequest = { ...rest, ...(blur !== undefined ? { blur } : {}), ...(grain !== undefined ? { grain } : {}), at: new Date().toISOString() };
   const answer: FileRestoreQueueAnswer = { queued: [], refused: [] };
   for (const path of paths) {
     const node = await restorable(cmd, path);
@@ -259,7 +268,7 @@ const fileRestore = async (cmd: Command): CmdReturn => {
   const unknown: string[] = [];
   const flags = parseArgs(cmd.args, {
     boolean: ['unfade', 'dust', 'dark', 'verbose', 'queue', 'requested'],
-    string: ['fill', 'grain', 'mask'],
+    string: ['fill', 'blur', 'grain', 'mask'],
     alias: { v: 'verbose' },
     unknown: collectUnknownFlags(unknown),
   });
@@ -303,7 +312,7 @@ const fileRestore = async (cmd: Command): CmdReturn => {
 
   const given = flags.mask ? resolve(cmd.cwd, flags.mask) : undefined;
   if (flags.queue && given) return await fail('--mask fills one picture, and --queue restores them as a set: restore it alone');
-  const steps = stepsOf({ unfade: flags.unfade, dust: flags.dust, dark: flags.dark, fill: flags.fill, grain: flags.grain, mask: given });
+  const steps = stepsOf({ unfade: flags.unfade, dust: flags.dust, dark: flags.dark, fill: flags.fill, blur: flags.blur, grain: flags.grain, mask: given });
   if (typeof steps === 'string') return await fail(steps);
 
   if (flags.queue) {
@@ -339,7 +348,7 @@ const fileRestore = async (cmd: Command): CmdReturn => {
 fileRestore.spec = {
   name: 'file-restore',
   effect: 'write' as const,
-  description: 'Restore a photo into a new version beside it: faded colours back, dust and scratches filled, grain lessened',
+  description: 'Restore a photo into a new version beside it: faded colours back, dust and scratches filled, blur taken out, grain lessened',
   args: [{ name: 'file', type: 'path' as const, description: 'The picture to restore (JPEG, PNG, TIFF, WebP or BMP), or with --queue any number; it is never written' }],
   flags: [
     { name: 'unfade', type: 'bool' as const, description: 'Give a faded colour print its colours back: each channel stretched, the neutral tones made grey' },
@@ -356,6 +365,7 @@ fileRestore.spec = {
       description:
         'Fill what this mask marks instead of finding the damage: a one-channel PNG the size of the picture as stored, nonzero where marked. It is copied beside the version',
     },
+    { name: 'blur', type: 'string' as const, description: 'Take out blur: focus for a picture out of focus, motion for one blurred by a moving camera' },
     { name: 'grain', type: 'string' as const, description: 'Lessen grain and noise, at this strength (above 0, at most 1; 0.5 keeps about half the grain)' },
     {
       name: 'queue',
@@ -369,6 +379,7 @@ fileRestore.spec = {
     'file-restore /archive/scans/1974/print-07.jpg --unfade --dust',
     'file-restore /archive/scans/1952/portrait.tif --dust --dark --fill lama --grain 0.5',
     'file-restore /archive/scans/1974/print-07.jpg --unfade --mask /archive/scans/1974/print-07-mask.png',
+    'file-restore /archive/scans/1968/party.jpg --blur motion',
     'file-restore --queue --unfade --dust /archive/scans/1974/*.jpg',
   ],
   returns: 'The version written, with the steps that made it and, with --dust or --mask, its mask and marks; with --queue the pictures queued and those refused, and why',

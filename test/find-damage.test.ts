@@ -18,7 +18,7 @@ Deno.test({
 }, async (t) => {
   const { vfs } = await testCtx.setup();
   const client = await testCtx.server.createShellClient();
-  let scores = { faded: 0.8, dusty: 0.5, scratched: 0.1 };
+  let scores = { faded: 0.8, dusty: 0.5, scratched: 0.1, blurred: 0.2, shaken: 0.6 };
   const stub = startStubEms({
     ops: {
       'image.damage': () => ({
@@ -38,11 +38,11 @@ Deno.test({
 
     await t.step('the scores, the kinds that reach a half, what read them', async () => {
       const answer = await read('/library/scans/print.jpg');
-      assertEquals(answer.damage, ['faded', 'dust']);
-      assertEquals(answer.damageScores, { faded: 0.8, dusty: 0.5, scratched: 0.1 });
+      assertEquals(answer.damage, ['faded', 'dust', 'shaken']);
+      assertEquals(answer.damageScores, { faded: 0.8, dusty: 0.5, scratched: 0.1, blurred: 0.2, shaken: 0.6 });
       assertEquals(answer.damageBy, 'damage/1+bopb-detection');
       const attrs = (await vfs.get(ADMIN_ACCESS, '/library/scans/print.jpg')).attrs;
-      assertEquals(attrs.damage, ['faded', 'dust']);
+      assertEquals(attrs.damage, ['faded', 'dust', 'shaken']);
       assertEquals(attrs.damageAt, answer.damageAt);
       // The picture as stored: damage does not depend on its turn.
       const asked = stub.requests.find((r) => r.op === 'image.damage')!;
@@ -50,7 +50,7 @@ Deno.test({
     });
 
     await t.step('read once; -f reads again', async () => {
-      scores = { faded: 0, dusty: 0, scratched: 0.9 };
+      scores = { faded: 0, dusty: 0, scratched: 0.9, blurred: 0, shaken: 0 };
       const asked = stub.requests.length;
       await client.exec(`${env} find-damage /library/scans/print.jpg`);
       assertEquals(stub.requests.length, asked);

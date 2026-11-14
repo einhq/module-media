@@ -36,6 +36,7 @@ Deno.test({
       'image.unfade': step('image.unfade', { levels: [[0.1, 0.8], [0.1, 0.7], [0.2, 0.6]], gammas: [1.2, 0.9, 0.9] }),
       'image.defects': step('image.defects', { marked: 120, fraction: 0.0005 }),
       'image.inpaint': step('image.inpaint', { filled: 120 }),
+      'image.deblur': step('image.deblur', {}),
       'image.denoise': step('image.denoise', {}),
       // The picture as it was given, as exiftool leaves the pixels.
       'image.copy_tags': async (raw) => {
@@ -125,6 +126,21 @@ Deno.test({
       assertEquals(tagging()[0].body.digital_source_type, 'algorithmicallyEnhanced');
       assertEquals(answer.mask, undefined);
       assertEquals(answer.restoration.marked, undefined);
+    });
+
+    await t.step('blur is taken out after the dust and before the grain, as asked', async () => {
+      await client.exec('printf print > /library/scans/shaken.jpg');
+      await vfs.update(ADMIN_ACCESS, '/library/scans/shaken.jpg', { attrs: { mimetype: 'image/jpeg', width: 600, height: 400 } });
+      calls.length = 0;
+      const answer = await restore('/library/scans/shaken.jpg --dust --blur motion --grain 0.5');
+      const ops = restoring();
+      assertEquals(ops.map((c) => c.op), ['image.defects', 'image.inpaint', 'image.deblur', 'image.denoise']);
+      assertEquals(ops[2].read, 'image.inpaint of 2');
+      assertEquals(ops[2].body.blur, 'motion');
+      assertEquals(ops[3].read, 'image.deblur of 3');
+      assertEquals(answer.restoration.steps[2], { op: 'image.deblur', params: { blur: 'motion' }, producer: 'image.deblur-model' });
+      assertEquals(tagging()[0].body.digital_source_type, 'algorithmicallyEnhanced');
+      assertErrorContains(await client.exec(`${env} file-restore /library/scans/shaken.jpg --blur wobble`), '--blur is focus or motion');
     });
 
     await t.step('a mask given is filled instead of one found, and kept beside the copy', async () => {

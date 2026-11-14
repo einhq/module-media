@@ -103,10 +103,10 @@ export type ExifExtractAnswer =
   | { held: string; by: string };
 
 /** A kind of damage a picture is found to have, as its `damage` attr lists it (`find-damage`). */
-export type DamageKind = 'faded' | 'dust' | 'scratches';
+export type DamageKind = 'faded' | 'dust' | 'scratches' | 'blurred' | 'shaken';
 
-/** How faded, dusty and scratched a picture is, each from 0 (none) to 1 (as much as a picture worth restoring for it has). */
-export type DamageScores = { faded: number; dusty: number; scratched: number };
+/** How faded, dusty, scratched, blurred and shaken a picture is, each from 0 (none) to 1 (as much as a picture worth restoring for it has). */
+export type DamageScores = { faded: number; dusty: number; scratched: number; blurred: number; shaken: number };
 
 /**
  * `find-damage`, and the attrs it keeps on the file: the kinds of damage found, the scores they
@@ -142,6 +142,7 @@ export type RestoreRequest = {
   dust: boolean;
   dark: boolean;
   fill: 'ns' | 'telea' | 'lama';
+  blur?: 'focus' | 'motion';
   grain?: number;
   at: string;
   failed?: string;

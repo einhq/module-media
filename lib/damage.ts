@@ -7,7 +7,7 @@ export const RESTORABLE = new Set(['image/jpeg', 'image/png', 'image/tiff', 'ima
 const DAMAGE_LEVEL = 0.5;
 
 /** Each kind of damage a file's `damage` lists, by the score that finds it. */
-const KINDS: [DamageKind, keyof DamageScores][] = [['faded', 'faded'], ['dust', 'dusty'], ['scratches', 'scratched']];
+const KINDS: [DamageKind, keyof DamageScores][] = [['faded', 'faded'], ['dust', 'dusty'], ['scratches', 'scratched'], ['blurred', 'blurred'], ['shaken', 'shaken']];
 
 /** The kinds of damage `scores` find, in a fixed order. */
 export const damageFound = (scores: DamageScores): DamageKind[] => KINDS.filter(([, score]) => scores[score] >= DAMAGE_LEVEL).map(([kind]) => kind);
