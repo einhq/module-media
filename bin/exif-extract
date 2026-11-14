@@ -62,6 +62,9 @@ function get(raw: Record<string, unknown>, key: string): string {
   return String(val);
 }
 
+/** Whether `lat`, `lng` is on Earth and not 0,0. */
+const isPlace = (lat: number, lng: number): boolean => Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+
 function getNum(raw: Record<string, unknown>, key: string): number | undefined {
   const val = raw[key];
   if (val === null || val === undefined) return undefined;
@@ -297,9 +300,10 @@ const exifExtract = async (cmd: Command): CmdReturn => {
   if (codec) fileinfo.codec = codec;
   if (isAnamorphic(sar)) fileinfo.sar = sar;
 
-  // Build geolocation (where)
+  // Build geolocation (where). A fix with DOP 0 has no fix, and neither has one at 0,0: what a
+  // camera or phone without a fix writes, never where a picture was taken.
   let where: Record<string, unknown> | null = null;
-  if (gpsLon !== undefined && gpsLat !== undefined && gpsDop !== 0) {
+  if (gpsLon !== undefined && gpsLat !== undefined && gpsDop !== 0 && isPlace(gpsLat, gpsLon)) {
     const gps: Record<string, unknown> = { longitude: gpsLon, latitude: gpsLat };
     if (gpsAlt !== undefined) gps.altitude = gpsAlt;
     if (country) gps.country = country;
