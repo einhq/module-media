@@ -1,0 +1,14 @@
+{
+  "panels": [
+    {
+      "id": "media.processing",
+      "slot": "settings.views",
+      "label": "Processing",
+      "description": "How much media work runs at once: thumbnails, renditions, fingerprints and faces.",
+      "icon": "gauge",
+      "route": "/settings/processing",
+      "admin": true,
+      "order": 50
+    }
+  ]
+}
