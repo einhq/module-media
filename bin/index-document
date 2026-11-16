@@ -86,7 +86,7 @@ const indexDocument = async (cmd: Command): CmdReturn => {
 
   if (verbose) await cmd.writeLn(`Extracting text from ${mimetype}...`);
 
-  // Extraction (PyMuPDF, python-docx, odfpy, and OCR for a scanned page) lives in EMS.
+  // Extraction (PDFium, python-docx, odfpy, LibreOffice for old Word and RTF, and OCR for a scanned page) lives in EMS.
   const indexedAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
   let output: ExtractResult;
   try {

@@ -7,7 +7,8 @@ search finds a file's texts by. A transcript's voices — who speaks when — ar
 ## Reading text
 
 `document-index` runs `index-document` on a file's VFS `updated` and on its
-`moved`, one trigger body shared by both: PDF, plain text, Word and OpenDocument text. JSON and
+`moved`, one trigger body shared by both: PDF, plain text, Word (`.docx` and old `.doc`), RTF and
+OpenDocument text. JSON and
 XMP sidecars are not documents. Pictures are `media-ocr`'s: `read-text` on the media
 pool (kind `ocr`), after `media.metadata.extracted` so the picture is read in its display frame,
 and on a `moved`. It asks EMS `ocr.read` (PP-OCRv6) for the original's lines and keeps them

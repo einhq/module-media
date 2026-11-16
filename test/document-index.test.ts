@@ -208,6 +208,8 @@ Deno.test({
         'text/plain',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'application/vnd.oasis.opendocument.text',
+        'application/msword',
+        'application/rtf',
         'image/jpeg',
         'image/png',
         'image/heic',

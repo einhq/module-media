@@ -183,6 +183,8 @@ export const TEXT_DOCUMENT_MIMETYPES = [
   'text/plain',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.oasis.opendocument.text',
+  'application/msword',
+  'application/rtf',
 ];
 
 /**

@@ -45,6 +45,8 @@ triggers:
         application/pdf|text/plain) exit 0;;
         application/vnd.openxmlformats-officedocument.wordprocessingml.document) exit 0;;
         application/vnd.oasis.opendocument.text) exit 0;;
+        # Old Word and RTF, which EMS reads from the PDF LibreOffice converts them to.
+        application/msword|application/rtf) exit 0;;
         # Pictures are read by media-ocr, on the media pool.
         text/markdown) exit 1;;
         # JSON and XMP sidecars (application/json, application/rdf+xml) are metadata, not
@@ -62,6 +64,8 @@ triggers:
         - text/plain
         - application/vnd.openxmlformats-officedocument.wordprocessingml.document
         - application/vnd.oasis.opendocument.text
+        - application/msword
+        - application/rtf
     unless: *unread
     skipIfAttr: textIndexedAt
 
