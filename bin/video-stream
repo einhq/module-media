@@ -1,0 +1,102 @@
+#!ts
+/**
+ * video-stream — a video as H.264 and AAC in fragmented MP4, made by EMS while it is read.
+ *
+ * For a player that cannot decode the AV1 renditions, such as a TV: the bytes go to stdout as EMS
+ * makes them (`video.stream`), from the original, upright as the file is shown, and nothing is
+ * kept. A reader that stops reading holds EMS's encoder; one that goes away, or an interrupt,
+ * stops it.
+ */
+import type { CmdReturn, Command } from '@ein/client';
+import { collectUnknownFlags, parseArgs, reportUnknownFlags } from '@ein/client';
+import { resolve } from '@std/path';
+import { stepExitCode, streamVideo } from '@ems/client';
+import { normalizeAngle, normalizeMirror } from '@media/orientation';
+
+const videoStream = async (cmd: Command): CmdReturn => {
+  const unknown: string[] = [];
+  const flags = parseArgs(cmd.args, { string: ['start', 'fps'], boolean: ['muted'], unknown: collectUnknownFlags(unknown) });
+  if (await reportUnknownFlags(cmd, unknown)) return 1;
+
+  const [target] = flags._.map(String);
+  if (!target) {
+    await cmd.writeError('video-stream: usage: video-stream <file> [--start=<seconds>] [--fps=<n>] [--muted]\n');
+    return 1;
+  }
+  const start = flags.start === undefined ? 0 : Number(flags.start);
+  const fps = flags.fps === undefined ? undefined : Number(flags.fps);
+  if (!Number.isFinite(start) || start < 0) {
+    await cmd.writeError(`video-stream: --start=${flags.start}: not a number of seconds\n`);
+    return 1;
+  }
+  if (fps !== undefined && !(Number.isInteger(fps) && fps >= 1 && fps <= 60)) {
+    await cmd.writeError(`video-stream: --fps=${flags.fps}: a whole number from 1 to 60\n`);
+    return 1;
+  }
+
+  const path = resolve(cmd.cwd, target);
+  let node;
+  try {
+    node = await cmd.sys.vfs.get<{ mimetype?: unknown; angle?: unknown; mirror?: unknown; codec?: unknown }>(cmd.access, path);
+  } catch (error) {
+    await cmd.writeError(`video-stream: ${path}: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+  const mimetype = typeof node.attrs.mimetype === 'string' ? node.attrs.mimetype : '';
+  if (node.type !== 'file' || !mimetype.startsWith('video/')) {
+    await cmd.writeError(`video-stream: ${path}: not a video (${mimetype || node.type})\n`);
+    return 1;
+  }
+
+  let stream;
+  try {
+    stream = await streamVideo(cmd, path, {
+      angle: normalizeAngle(node.attrs.angle),
+      mirror: normalizeMirror(node.attrs.mirror),
+      start,
+      ...(fps !== undefined ? { fps } : {}),
+      ...(flags.muted ? { audioBitrate: null } : {}),
+      ...(typeof node.attrs.codec === 'string' && node.attrs.codec ? { sourceCodec: node.attrs.codec } : {}),
+    });
+  } catch (error) {
+    await cmd.writeError(`video-stream: ${path}: ${error instanceof Error ? error.message : String(error)}\n`);
+    return stepExitCode(error);
+  }
+
+  const reader = stream.body.getReader();
+  try {
+    while (!cmd.interrupted) {
+      const { value, done } = await reader.read();
+      if (done) return 0;
+      await cmd.stdout.write(value);
+    }
+    return 130;
+  } catch (error) {
+    await cmd.writeError(`video-stream: ${path}: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+};
+
+videoStream.spec = {
+  name: 'video-stream',
+  effect: 'read' as const,
+  json: false,
+  description: 'Write a video as H.264 and AAC in fragmented MP4, made by the media service while it is read',
+  args: [
+    { name: 'file', type: 'path' as const, description: 'VFS path to a video' },
+  ],
+  flags: [
+    { name: 'start', type: 'string' as const, description: 'Where in the video to begin, in seconds (the stream starts its own clock at 0 there)' },
+    { name: 'fps', type: 'string' as const, description: 'The most frames a second, 1 to 60 (30 by default)' },
+    { name: 'muted', type: 'bool' as const, description: 'Leave the sound out' },
+  ],
+  examples: [
+    'video-stream /archive/albums/Exempelalbum_2019/files/segling.mov > /tmp/segling.mp4',
+    'video-stream /archive/albums/Exempelalbum_2019/files/segling.mov --start=95 --muted > /tmp/segling-slut.mp4',
+  ],
+  returns: 'the MP4 on stdout, a header at once and a fragment at least every second.',
+};
+
+export default videoStream;

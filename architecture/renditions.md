@@ -77,6 +77,11 @@ are **ceilings**, not targets — `audio.transcode` caps them at the source's ow
 mono for a mono source, after a flat 128k stereo turned a 14.8 MB 64 kbps mono tape rip into
 a 30 MB rendition carrying strictly less information.
 
+**A screen that cannot play AV1 gets an H.264 stream instead, and nothing is kept.**
+`video-stream` asks EMS for `video.stream` from the original, turned as it is shown, and writes
+the fragmented MP4 to stdout while EMS makes it: H.264 at most 1080p30 and AAC in two channels,
+from `--start` on. Which screens need it is ein/core#1331.
+
 The transcodes (`@media/transcode`) and the image ladder
 **create the output node before EMS writes** — `sourceId` has to be set at creation so
 the bytes route to the volatile tier — and so they must delete that node again when the encode
