@@ -112,13 +112,15 @@ export const withLanes = async (facts: Omit<DomainEvent, 'id'>[], ctx: FileRuleC
 };
 
 /**
- * VFS routing keys the media bridge binds: the file writes and removals, the metadata node's writes,
- * and a directory moved whole, which publishes this event for the directory alone, none for the
- * files in it.
+ * VFS routing keys the media bridge binds: the file writes, moves and removals, the metadata node's
+ * writes, and a directory moved whole, which publishes this event for the directory alone, none for
+ * the files in it. A file is moved before it is read when an upload goes to a temporary name and is
+ * renamed when it is done.
  */
 export const MEDIA_BRIDGE_ROUTING_KEYS = [
   'system.vfs.file.created',
   'system.vfs.file.updated',
+  'system.vfs.file.moved',
   'system.vfs.file.deleted',
   'system.vfs.exif.created',
   'system.vfs.exif.updated',

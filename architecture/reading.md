@@ -3,9 +3,10 @@
 What the media module learns of a picture, a video or a recording before anything is made of it,
 and the facts of a media file itself that the pipelines start on.
 
-**The bridge.** `media-bridge` binds the file writes and removals and the `exif` node's writes, and
-publishes on `/dev/events` what they reveal (`@media/file-rules`): `media.file.discovered` for a
-media file with bytes and no `metadata/exif`, `media.file.content-changed` for one whose bytes are
+**The bridge.** `media-bridge` binds the file writes, moves and removals and the `exif` node's
+writes, and publishes on `/dev/events` what they reveal (`@media/file-rules`): `media.file.discovered`
+for a media file with bytes and no `metadata/exif`, wherever it was written or moved to (an upload
+sent under a temporary name and renamed when done is read under its own), `media.file.content-changed` for one whose bytes are
 no longer those its metadata was read from (`sourceSha256`), `media.file.turned` for a video turned
 by hand once read, `media.file.removed` off the attrs a deleted file carried,
 `media.metadata.extracted` for a filled `exif` node, and `media.renditions.made` for the write of

@@ -7,7 +7,17 @@
 import { assertEquals } from '@std/assert';
 import { parse as parseYaml } from '@std/yaml';
 import type { DomainEvent } from '@ein/client';
-import { deriveFileEvents, FILE_FACTS, type FileRuleContext, HOLD_ATTR, isTextReadPath, LANE_ATTR, type NodeSnapshot, type VfsEventInput } from '@media/file-rules';
+import {
+  deriveFileEvents,
+  FILE_FACTS,
+  type FileRuleContext,
+  HOLD_ATTR,
+  isTextReadPath,
+  LANE_ATTR,
+  MEDIA_BRIDGE_ROUTING_KEYS,
+  type NodeSnapshot,
+  type VfsEventInput,
+} from '@media/file-rules';
 import { RESTORE_FACTS, TEXT_FACTS } from '@media/facts';
 
 const LIBRARY = '/library/x';
@@ -34,6 +44,16 @@ const types = (facts: Omit<DomainEvent, 'id'>[]) => facts.map((fact) => fact.typ
 Deno.test('a media file with bytes and no metadata read is discovered', async () => {
   const facts = await deriveFileEvents(event('file', IMG), tree({ [IMG]: file('f1') }), 100);
   assertEquals(facts.map((fact) => [fact.type, fact.subject, fact.nodeId, fact.data?.mimetype]), [[FILE_FACTS.discovered, IMG, 'f1', 'image/jpeg']]);
+});
+
+Deno.test('a media file moved before it was read is discovered where it went; one read already is not', async () => {
+  const uploaded = `${LIBRARY}/PXL_0001.jpg`;
+  const moved = await deriveFileEvents({ ...event('file', uploaded, 'moved'), fromPath: `${uploaded}.tacitpart` }, tree({ [uploaded]: file('f1') }), 100);
+  assertEquals(moved.map((fact) => [fact.type, fact.subject]), [[FILE_FACTS.discovered, uploaded]]);
+
+  const read = tree({ [uploaded]: file('f1'), [`${uploaded}/metadata/exif`]: exif() });
+  assertEquals(await deriveFileEvents({ ...event('file', uploaded, 'moved'), fromPath: '/library/y/PXL_0001.jpg' }, read, 100), []);
+  assertEquals(MEDIA_BRIDGE_ROUTING_KEYS.includes('system.vfs.file.moved'), true);
 });
 
 Deno.test('nothing in a trash, outside the trees media is read in, or not media is discovered', async () => {
